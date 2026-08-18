@@ -7,8 +7,9 @@ export function registerServiceWorker(): void {
   if (!('serviceWorker' in navigator)) return
   // Vite dev server doesn't serve the built SW context reliably; register in prod only
   if (import.meta.env.DEV) return
+  const base = import.meta.env.BASE_URL
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => { /* non-fatal */ })
+    navigator.serviceWorker.register(`${base}sw.js`).catch(() => { /* non-fatal */ })
   })
 }
 
@@ -31,8 +32,9 @@ export async function getPushState(): Promise<PushState> {
 
 export async function subscribePush(): Promise<void> {
   const { public_key } = await api.get('/api/push/vapid-public-key')
+  const base = import.meta.env.BASE_URL
   const reg = (await navigator.serviceWorker.getRegistration())
-    ?? (await navigator.serviceWorker.register('/sw.js'))
+    ?? (await navigator.serviceWorker.register(`${base}sw.js`))
   await navigator.serviceWorker.ready
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,

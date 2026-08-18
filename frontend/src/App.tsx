@@ -19,7 +19,7 @@ export default function App() {
   return (
     <I18nProvider>
       <AppProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={import.meta.env.BASE_URL}>
           <Layout>
             <Routes>
               <Route path="/" element={<Landing />} />
