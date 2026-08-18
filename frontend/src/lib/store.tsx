@@ -18,9 +18,17 @@ interface AppState {
 
 const Ctx = createContext<AppState>(null as unknown as AppState)
 let toastId = 0
+const USER_KEY = 'cl_user'
+
+/** Demo session: user was logged in via the static frontend's fallback (no backend). */
+function isDemoUser(u: User | null): boolean {
+  return !!u && u.id.startsWith('demo-')
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUserState] = useState<User | null>(() => {
+    try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null') } catch { return null }
+  })
   const [authLoaded, setAuthLoaded] = useState(false)
   const [meta, setMeta] = useState<Meta | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -28,14 +36,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.getItem('cl_dark') === '1' ||
     (localStorage.getItem('cl_dark') === null && window.matchMedia('(prefers-color-scheme: dark)').matches))
 
+  const setUser = useCallback((u: User | null) => {
+    setUserState(u)
+    if (u) localStorage.setItem(USER_KEY, JSON.stringify(u))
+    else localStorage.removeItem(USER_KEY)
+  }, [])
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
     localStorage.setItem('cl_dark', dark ? '1' : '0')
   }, [dark])
 
   useEffect(() => {
+    // If we already have a persisted demo session, keep it — no backend to re-check.
+    if (isDemoUser(user)) {
+      setAuthLoaded(true)
+      return
+    }
     api.get('/api/auth/me').then(u => setUser(u)).catch(() => {}).finally(() => setAuthLoaded(true))
     api.get('/api/meta').then(setMeta).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const toast = useCallback((kind: Toast['kind'], msg: string) => {

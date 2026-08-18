@@ -4,6 +4,7 @@ import { Eye, EyeOff, Loader2, LogIn, UserPlus } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
 import { useApp } from '../lib/store'
 import { useI18n } from '../lib/i18n'
+import { loginDemo } from '../lib/demo'
 import { LogoMark } from '../components/Logo'
 
 export default function Login() {
@@ -36,14 +37,32 @@ export default function Login() {
         setMode('login')
         return
       }
-      const user = mode === 'login'
-        ? await api.post('/api/auth/login', { email, password })
-        : await api.post('/api/auth/register', { email, password, name, city })
+      let user
+      try {
+        user = mode === 'login'
+          ? await api.post('/api/auth/login', { email, password })
+          : await api.post('/api/auth/register', { email, password, name, city })
+      } catch (err) {
+        // ---- Static-host fallback (e.g. GitHub Pages has no backend) ----
+        // If the API is unreachable but the credentials match a known demo
+        // account, sign in locally so the UI can still be explored.
+        if (mode === 'login') {
+          const demoUser = loginDemo(email, password)
+          if (demoUser) {
+            user = demoUser
+            toast('info', 'Demo mode: backend offline — signed in with demo account.')
+          } else {
+            throw err
+          }
+        } else {
+          throw err
+        }
+      }
       setUser(user)
       toast('success', `Welcome, ${user.name.split(' ')[0]}!`)
       nav(user.role === 'admin' || user.role === 'moderator' ? '/dashboard' : user.role === 'org_staff' ? '/organization' : '/')
     } catch (err) {
-      toast('error', err instanceof ApiError ? err.message : 'Something went wrong')
+      toast('error', err instanceof ApiError ? err.message : (err instanceof Error ? err.message : 'Something went wrong'))
     } finally { setBusy(false) }
   }
 
