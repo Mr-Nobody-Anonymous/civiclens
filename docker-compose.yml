@@ -1,0 +1,87 @@
+version: "3.9"
+
+# CivicLens Ethiopia — full production-style stack:
+#   db (PostgreSQL) + redis + api + worker + ai + frontend build baked into api image
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: civiclens
+      POSTGRES_USER: civiclens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U civiclens"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  ai:
+    build: ./ai-service
+    restart: unless-stopped
+    environment:
+      AI_MODEL: ${AI_MODEL:-heuristic}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llava:7b}
+    expose: ["8090"]
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      ai: { condition: service_started }
+    environment:
+      CL_ENV: production
+      CL_SECRET_KEY: ${CL_SECRET_KEY:?set CL_SECRET_KEY in .env}
+      CL_DATABASE_URL: postgresql+psycopg://civiclens:${POSTGRES_PASSWORD}@db:5432/civiclens
+      CL_STORAGE_DIR: /data/storage
+      CL_AI_SERVICE_URL: http://ai:8090
+      CL_JOB_BACKEND: redis
+      CL_REDIS_URL: redis://redis:6379/0
+      CL_EMAIL_BACKEND: ${CL_EMAIL_BACKEND:-console}
+    volumes:
+      - mediadata:/data/storage
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "python -m alembic upgrade head && python seed.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_started }
+    environment:
+      CL_DATABASE_URL: postgresql+psycopg://civiclens:${POSTGRES_PASSWORD}@db:5432/civiclens
+      CL_STORAGE_DIR: /data/storage
+      CL_AI_SERVICE_URL: http://ai:8090
+      CL_JOB_BACKEND: redis
+      CL_REDIS_URL: redis://redis:6379/0
+    volumes:
+      - mediadata:/data/storage
+    command: python -m app.worker
+
+  # Optional: local Ollama for real vision/LLM analysis (needs ~8GB RAM+)
+  # ollama:
+  #   image: ollama/ollama
+  #   volumes: [ollamadata:/root/.ollama]
+
+volumes:
+  dbdata:
+  mediadata:
+  redisdata:
+  # ollamadata:

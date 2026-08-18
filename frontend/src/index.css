@@ -1,0 +1,55 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+@import "leaflet.markercluster/dist/MarkerCluster.css";
+@import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-et-green: #078930;
+  --color-et-yellow: #FCDD09;
+  --color-et-red: #DA121A;
+  --color-brand-50: #edfcf2;
+  --color-brand-100: #d4f7e0;
+  --color-brand-200: #adedc6;
+  --color-brand-300: #77dda5;
+  --color-brand-400: #40c57f;
+  --color-brand-500: #1aab64;
+  --color-brand-600: #0d8a50;
+  --color-brand-700: #0b6e42;
+  --color-brand-800: #0b5736;
+  --color-brand-900: #0a482e;
+  --color-brand-950: #04281a;
+  --font-sans: "Inter", "Noto Sans Ethiopic", ui-sans-serif, system-ui, sans-serif;
+  --animate-fade-up: fadeUp .5s ease both;
+  --animate-fade-in: fadeIn .4s ease both;
+  --animate-pulse-soft: pulseSoft 2s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulseSoft { 0%,100% { opacity:.55 } 50% { opacity:1 } }
+@keyframes shimmer { from { background-position: -400px 0 } to { background-position: 400px 0 } }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  html { scroll-behavior: auto; }
+}
+body { @apply bg-gray-50 text-gray-900 antialiased dark:bg-[#0b1210] dark:text-gray-100; }
+
+.card { @apply rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-white/10 dark:bg-white/[0.04]; }
+.btn, .btn-primary, .btn-secondary, .btn-danger { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-50 disabled:pointer-events-none active:scale-[.98]; }
+.btn-primary { @apply bg-brand-600 text-white hover:bg-brand-700 shadow-lg shadow-brand-600/25; }
+.btn-secondary { @apply border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-white/15 dark:bg-white/5 dark:text-gray-100 dark:hover:bg-white/10; }
+.btn-danger { @apply bg-et-red text-white hover:bg-red-700; }
+.input { @apply w-full rounded-xl border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/15 dark:bg-white/5 dark:text-gray-100 placeholder:text-gray-400; }
+.label { @apply mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300; }
+.skeleton { @apply rounded-lg bg-gray-200 dark:bg-white/10 animate-pulse; }
+.eth-strip { background: linear-gradient(90deg, #078930 33%, #FCDD09 33% 66%, #DA121A 66%); }
+
+.leaflet-container { @apply rounded-2xl z-0; font: inherit; }
+.dark .leaflet-tile { filter: brightness(.7) invert(1) contrast(2.8) hue-rotate(190deg) saturate(.35) brightness(.8); }
+.dark .leaflet-container { background: #0b1210; }
+.marker-dot { display:flex; align-items:center; justify-content:center; border-radius:9999px; color:#fff; font-weight:700; font-size:11px; box-shadow:0 2px 8px rgba(0,0,0,.35); border:2px solid rgba(255,255,255,.9); }
