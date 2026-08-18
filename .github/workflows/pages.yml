@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      api_base:
+        description: 'Backend API base URL (e.g. https://civiclens-api.onrender.com). Leave empty for no backend.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -14,6 +19,12 @@ permissions:
 concurrency:
   group: pages
   cancel-in-progress: true
+
+env:
+  # Set this in GitHub repo Settings -> Secrets and variables -> Actions -> Variables
+  # to point the static frontend at your deployed backend, e.g.:
+  #   VITE_API_BASE=https://civiclens-api.onrender.com
+  VITE_API_BASE: ${{ vars.VITE_API_BASE }}
 
 jobs:
   build:
@@ -36,6 +47,8 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        env:
+          VITE_API_BASE: ${{ github.event.inputs.api_base || env.VITE_API_BASE }}
         run: npm run build
 
       - name: Setup Pages

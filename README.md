@@ -123,6 +123,22 @@ Public portal with resolution rates, per-organization performance scorecards, re
 
 ---
 
+## 🔑 Demo Accounts
+
+The development seed (`python seed.py`) creates the following demo accounts. These are **development-only** — disable or delete them before production (see PRODUCTION.md).
+
+| Role | Email | Password | What they can do |
+|------|-------|----------|------------------|
+| 👑 **Admin** | `admin@civiclens.et` | `admin12345` | Full access — monitor all reports, investigate, govern settings |
+| 🧑‍⚖️ **Moderator** | `moderator@civiclens.et` | `moderator123` | Review queue — approve/reject AI triage, audit decisions |
+| 🏢 **Org Staff (Ethio telecom)** | `staff@ethiotelecom.et` | `telecom123` | Handle reports assigned to Ethio telecom |
+| 🏢 **Org Staff (Roads)** | `staff@roads.et` | `roads12345` | Handle reports assigned to the Roads Authority |
+| 👤 **Citizen** | `citizen@example.et` | `citizen123` | Submit reports, track status, verify fixes |
+
+> ℹ️ **Live site demo (GitHub Pages):** the hosted frontend at `https://mr-nobody-anonymous.github.io/civiclens/` is static-only — it **cannot** log in because the FastAPI backend is not running on GitHub Pages. To use the demo accounts online, deploy the backend (Render Blueprint is the easiest one-click option — see below), then set the repo variable `VITE_API_BASE` to your backend URL and re-run the Pages workflow.
+
+---
+
 ## ⚡ Quick Start
 
 <details open>
@@ -151,7 +167,7 @@ cd frontend && npm install && npm run dev
 # → http://localhost:5173
 ```
 
-**Demo accounts** (dev only): `admin@civiclens.et`/`admin12345` · `moderator@civiclens.et`/`moderator123` · `staff@roads.et`/`roads12345` · `citizen@example.et`/`citizen123`
+For the full demo-account list and what each role can do, see the [Demo Accounts](#-demo-accounts) table above.
 </details>
 
 <details>
@@ -173,11 +189,12 @@ One repo, seven ready-made targets — see **[DEPLOYMENT.md](DEPLOYMENT.md)** fo
 |--------|--------|-----------|
 | 🖥️ Any Docker host / VPS | `docker-compose.yml` | `docker compose up -d --build` |
 | 📦 Prebuilt images (no build tools) | `docker-compose.prebuilt.yml` | pulls from GHCR |
-| 🎨 Render.com | `render.yaml` | one-click Blueprint: web+worker+AI+PG+Redis+disk |
+| 🎨 Render.com | `render.yaml` | One-click Blueprint: full-stack (web+worker+AI+PG+Redis+disk) — **easiest for a live demo** |
 | 🚂 Railway | `railway.json` | Dockerfile build + healthcheck |
-| 🎈 Fly.io | `fly.toml` | app+worker groups, region `jnb` |
+| 🎈 Fly.io | `fly.toml` | app+worker stack, region `jnb` |
 | ▲ Vercel (frontend) | `frontend/vercel.json` | CDN SPA, `/api/*` proxied |
 | 🌐 Netlify (frontend) | `frontend/netlify.toml` | same pattern |
+| 🌾 GitHub Pages (frontend) | `.github/workflows/pages.yml` | static frontend only — pair with a deployed backend via `VITE_API_BASE` |
 
 CI/CD included: every push to `main` builds & publishes Docker images to GitHub Container Registry; optional auto-deploy hooks for Render/Vercel/Fly. Split deployments (SPA and API on different origins) work natively — `VITE_API_BASE` + `CL_CORS_ORIGINS` and cookies switch to `SameSite=None; Secure` automatically.
 

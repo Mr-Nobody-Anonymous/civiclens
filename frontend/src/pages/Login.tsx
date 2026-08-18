@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Loader2, LogIn, UserPlus } from 'lucide-react'
+import { Eye, EyeOff, Loader2, LogIn, UserPlus } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
 import { useApp } from '../lib/store'
 import { useI18n } from '../lib/i18n'
@@ -16,6 +16,7 @@ export default function Login() {
   const [name, setName] = useState('')
   const [city, setCity] = useState('Addis Ababa')
   const [resetToken, setResetToken] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
@@ -103,10 +104,19 @@ export default function Login() {
                   placeholder="Paste the token from the email" /></div>
             )}
             {mode !== 'forgot' && (
-              <div><label htmlFor="pw" className="label">{mode === 'reset' ? 'New password' : 'Password'}</label>
-                <input id="pw" type="password" className="input" required minLength={mode === 'login' ? 1 : 8} value={password} onChange={e => setPassword(e.target.value)}
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
-                {(mode === 'register' || mode === 'reset') && <p className="mt-1 text-xs text-ink-500 dark:text-ink-400">At least 8 characters.</p>}</div>
+              <div>
+                <label htmlFor="pw" className="label">{mode === 'reset' ? 'New password' : 'Password'}</label>
+                <div className="relative">
+                  <input id="pw" type={showPassword ? 'text' : 'password'} className="input pr-10" required
+                    minLength={mode === 'login' ? 1 : 8} value={password} onChange={e => setPassword(e.target.value)}
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+                  <button type="button" onClick={() => setShowPassword(s => !s)} aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-600 dark:text-ink-500 dark:hover:text-ink-300">
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                {(mode === 'register' || mode === 'reset') && <p className="mt-1 text-xs text-ink-500 dark:text-ink-400">At least 8 characters.</p>}
+              </div>
             )}
             <button className="btn-primary w-full !py-3" disabled={busy}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : mode === 'register' ? <UserPlus className="size-4" /> : <LogIn className="size-4" />}
