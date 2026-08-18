@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: CivicLens
+    folder: CivicLens
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

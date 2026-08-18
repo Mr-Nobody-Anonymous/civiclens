@@ -19,10 +19,10 @@ export default function Privacy() {
         <span className="grid size-12 place-items-center rounded-2xl bg-brand-600/10 text-brand-700 dark:text-brand-300"><ShieldCheck className="size-6" /></span>
         <div>
           <h1 className="text-2xl font-extrabold md:text-3xl">Privacy Policy</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">CivicLens Ethiopia · Last updated {new Date().toLocaleDateString()}</p>
+          <p className="text-sm text-ink-500 dark:text-ink-400">CivicLens Ethiopia · Last updated {new Date().toLocaleDateString()}</p>
         </div>
       </div>
-      <p className="mt-6 text-gray-600 dark:text-gray-300">
+      <p className="mt-6 text-ink-600 dark:text-ink-300">
         CivicLens Ethiopia exists to help citizens improve their cities — not to collect data about them.
         This page explains, in plain language, what we store and why.
       </p>
@@ -30,7 +30,7 @@ export default function Privacy() {
         {SECTIONS.map(([h, b], i) => (
           <section key={i} className="card p-6">
             <h2 className="font-bold">{i + 1}. {h}</h2>
-            <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-300">{b}</p>
+            <p className="mt-2 text-sm leading-relaxed text-ink-600 dark:text-ink-300">{b}</p>
           </section>
         ))}
       </div>

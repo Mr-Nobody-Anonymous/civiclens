@@ -71,6 +71,14 @@ def login(body: LoginIn, request: Request, response: Response, db: DBSession = D
         raise HTTPException(401, "Invalid email or password")
     if not user.is_active:
         raise HTTPException(403, "Account disabled")
+    # MFA: second factor required when enabled (TOTP or single-use backup code)
+    if user.mfa_enabled:
+        from .security2 import mfa_check
+        if not mfa_check(db, user, body.mfa_code):
+            record_login_result(db, body.email, success=False)
+            raise HTTPException(401 if body.mfa_code else 428,
+                                "MFA code required" if not body.mfa_code
+                                else "Invalid MFA code")
     record_login_result(db, body.email, success=True)
     create_session(db, user, response)
     audit(db, user.id, "user.login", "user", user.id, ip=client_ip(request))
@@ -103,7 +111,7 @@ def logout_all(request: Request, response: Response,
 def forgot_password(body: ForgotIn, request: Request, db: DBSession = Depends(get_db)):
     """Always returns ok (no account enumeration). Token is e-mailed via the
     configured backend (console in dev)."""
-    rate_limit(f"forgot:{client_ip(request)}", 5, 3600)
+    rate_limit(f"forgot:{client_ip(request)}", settings.rate_limit_auth_per_minute, 3600)
     user = db.query(User).filter(User.email == body.email.lower(),
                                  User.is_active == True).first()  # noqa: E712
     if user:
@@ -120,7 +128,7 @@ def forgot_password(body: ForgotIn, request: Request, db: DBSession = Depends(ge
 
 @router.post("/reset-password")
 def reset_password(body: ResetIn, request: Request, db: DBSession = Depends(get_db)):
-    rate_limit(f"reset:{client_ip(request)}", 10, 3600)
+    rate_limit(f"reset:{client_ip(request)}", settings.rate_limit_auth_per_minute, 3600)
     pr = db.get(PasswordReset, body.token)
     if not pr or pr.used:
         raise HTTPException(400, "Invalid or already-used reset token")
@@ -147,6 +155,25 @@ def logout(request: Request, response: Response, db: DBSession = Depends(get_db)
 @router.get("/me", response_model=UserOut | None)
 def me(user=Depends(get_current_user), db: DBSession = Depends(get_db)):
     return _user_out(db, user) if user else None
+
+
+@router.get("/csrf")
+def csrf_bootstrap(request: Request, db: DBSession = Depends(get_db)):
+    """CSRF token for the CURRENT session (cross-origin SPA bootstrap).
+
+    Same-origin frontends read the cl_csrf cookie directly; a frontend on a
+    different origin (e.g. Vercel SPA + API elsewhere) cannot read cookies of
+    the API's domain, so it fetches the token here with credentials included.
+    Safe: requires the HttpOnly session cookie, returns only this session's
+    token, and CORS restricts which origins may read the response.
+    """
+    from ..models import Session as SessionModel
+    from ..security import COOKIE_NAME
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return {"csrf_token": None}
+    sess = db.query(SessionModel).filter(SessionModel.id == token).first()
+    return {"csrf_token": sess.csrf_token if sess else None}
 
 
 @router.patch("/settings", response_model=UserOut)

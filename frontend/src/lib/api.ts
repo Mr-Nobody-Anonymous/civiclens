@@ -1,15 +1,52 @@
-// Central API client — all calls are same-origin (/api/*), proxied by Vite in
-// dev and served by FastAPI in production. No keys or secrets live here.
+// Central API client — by default all calls are same-origin (/api/*), proxied
+// by Vite in dev and served by FastAPI (or a platform rewrite, e.g. Vercel/
+// Netlify) in production. For SPLIT deployments where the API lives on another
+// origin, set VITE_API_BASE at build time (e.g. https://api.civiclens.et) —
+// every request, upload, media URL and SSE stream is prefixed with it.
+// No keys or secrets live here.
+
+/** Absolute base of the API ('' = same origin). Set VITE_API_BASE to split. */
+export const API_BASE: string =
+  ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
+
+/** Prefix an /api/... path with the configured API base. */
+export function apiUrl(path: string): string {
+  return API_BASE ? API_BASE + path : path
+}
+
+const CROSS_ORIGIN = API_BASE !== ''
 
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) { super(message); this.status = status }
 }
 
+// In cross-origin mode the browser can't read the cl_csrf cookie (it belongs
+// to the API's domain), so we bootstrap the token once from /api/auth/csrf
+// and keep it in memory. Same-origin mode keeps the double-submit cookie.
+let csrfMem = ''
+export function setCsrfToken(t: string) { csrfMem = t }
+
 /** Read the CSRF token from the (non-HttpOnly) double-submit cookie. */
 function csrfToken(): string {
   const m = document.cookie.match(/(?:^|;\s*)cl_csrf=([^;]+)/)
-  return m ? decodeURIComponent(m[1]) : ''
+  if (m) return decodeURIComponent(m[1])
+  return csrfMem
+}
+
+/** Public helper for raw fetch() callers: current CSRF token (cookie or memory). */
+export async function getCsrfToken(): Promise<string> {
+  await ensureCsrf()
+  return csrfToken()
+}
+
+/** Cross-origin only: fetch the CSRF token for the current session once. */
+async function ensureCsrf(): Promise<void> {
+  if (!CROSS_ORIGIN || csrfToken()) return
+  try {
+    const r = await fetch(apiUrl('/api/auth/csrf'), { credentials: 'include' })
+    if (r.ok) { const j = await r.json(); if (j?.csrf_token) csrfMem = j.csrf_token }
+  } catch { /* no session yet — server treats anonymous requests as exempt */ }
 }
 
 const FRIENDLY: Record<number, string> = {
@@ -29,16 +66,26 @@ async function handle(res: Response) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function req(method: string, url: string, body?: unknown): Promise<any> {
+async function req(method: string, url: string, body?: unknown): Promise<any> {
+  if (method !== 'GET') await ensureCsrf()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 30000)
   const headers: Record<string, string> = {}
   if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken()
   if (body !== undefined) headers['Content-Type'] = 'application/json'
-  return fetch(url, {
+  return fetch(apiUrl(url), {
     method, credentials: 'include', headers, signal: controller.signal,
     body: body === undefined ? undefined : JSON.stringify(body),
-  }).then(handle)
+  }).then(async res => {
+      const out = await handle(res)
+      // Cross-origin: a session was (re)created — refresh the in-memory CSRF token.
+      if (CROSS_ORIGIN && method === 'POST' &&
+          /^\/api\/auth\/(login|register|reset-password)/.test(url)) {
+        csrfMem = ''
+        await ensureCsrf()
+      }
+      return out
+    })
     .catch(e => {
       if (e instanceof ApiError) throw e
       if (e?.name === 'AbortError') throw new ApiError(0, 'Request timed out — check your connection and retry.')
@@ -50,8 +97,11 @@ function req(method: string, url: string, body?: unknown): Promise<any> {
 export const api = {
   get: (url: string) => req('GET', url),
   post: (url: string, body?: unknown) => req('POST', url, body),
+  put: (url: string, body?: unknown) => req('PUT', url, body ?? {}),
   patch: (url: string, body?: unknown) => req('PATCH', url, body ?? {}),
   delete: (url: string) => req('DELETE', url),
+  /** DELETE with a JSON body (e.g. push unsubscribe by endpoint). */
+  delete2: (url: string, body?: unknown) => req('DELETE', url, body),
 }
 
 /** Upload with real progress events (XHR — fetch has no upload progress). */
@@ -59,7 +109,7 @@ export function uploadWithProgress(
   url: string, file: File, fields: Record<string, string>,
   onProgress: (pct: number) => void,
 ): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  return ensureCsrf().then(() => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const fd = new FormData()
     fd.append('file', file)
@@ -74,11 +124,11 @@ export function uploadWithProgress(
       }
     }
     xhr.onerror = () => reject(new ApiError(0, 'Network error during upload'))
-    xhr.open('POST', url)
+    xhr.open('POST', apiUrl(url))
     xhr.withCredentials = true
     xhr.setRequestHeader('X-CSRF-Token', csrfToken())
     xhr.send(fd)
-  })
+  }))
 }
 
 /** Reverse geocode via OpenStreetMap Nominatim (best-effort, public endpoint). */

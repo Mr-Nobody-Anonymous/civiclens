@@ -18,6 +18,7 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+    mfa_code: Optional[str] = None
 
 
 class UserOut(BaseModel):
@@ -53,6 +54,7 @@ class ReportCreate(BaseModel):
     latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     address: Optional[str] = Field(default=None, max_length=255)
+    client_key: Optional[str] = Field(default=None, max_length=64)  # offline idempotency
     captcha_a: Optional[int] = None
     captcha_b: Optional[int] = None
     captcha_answer: Optional[int] = None

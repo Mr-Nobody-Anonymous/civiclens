@@ -151,6 +151,18 @@ DEMO_REPORTS = [
 
 
 def seed(fresh=False):
+    from app.config import settings
+    # ---- production safety gates ----
+    if settings.env == "production" and (settings.seed_demo_data or settings.create_demo_accounts):
+        print("REFUSING to seed demo data: CL_ENV=production but CL_SEED_DEMO_DATA / "
+              "CL_CREATE_DEMO_ACCOUNTS are not explicitly false. In production run with\n"
+              "  CL_SEED_DEMO_DATA=false CL_CREATE_DEMO_ACCOUNTS=false python seed.py\n"
+              "to create only organizations+rules, and create the first admin with:\n"
+              "  python create_admin.py <email> <name>")
+        raise SystemExit(2)
+    if not settings.seed_demo_data and not settings.create_demo_accounts:
+        seed_base_only()
+        return
     if fresh:
         Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
@@ -242,6 +254,32 @@ def seed(fresh=False):
         print("  staff@ethiotelecom.et / telecom123       (Ethio telecom staff)")
         print("  staff@roads.et / roads12345              (Roads Authority staff)")
         print("  citizen@example.et / citizen123          (Citizen)")
+    finally:
+        db.close()
+
+
+def seed_base_only():
+    """Production-safe seed: organizations + routing rules only. No demo
+    reports, no demo accounts. Idempotent."""
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        if db.query(Organization).first():
+            print("Base data already present — skipping.")
+            return
+        orgs = {}
+        for o in ORGS:
+            org = Organization(**o)
+            db.add(org)
+            orgs[o["name"]] = org
+        db.commit()
+        for cat, orgname, kws, city, prio, auto in RULES:
+            db.add(OrganizationRule(category=cat, organization_id=orgs[orgname].id,
+                                    keywords=kws, city=city or None, priority=prio,
+                                    auto_assign=auto))
+        db.commit()
+        print(f"Base seed complete: {len(ORGS)} organizations, {len(RULES)} routing rules. "
+              "No demo data created. Create the first admin with: python create_admin.py")
     finally:
         db.close()
 

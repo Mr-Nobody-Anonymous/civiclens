@@ -1,0 +1,35 @@
+# --- secrets & local env (NEVER commit) ---
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+
+# --- local dev data ---
+backend/civiclens.db
+backend/civiclens.db-*
+backend/storage/
+backend/*.db
+storage/
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- node / frontend ---
+node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+
+# --- misc ---
+.DS_Store
+*.log
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json

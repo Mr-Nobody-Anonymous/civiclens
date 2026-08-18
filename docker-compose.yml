@@ -52,13 +52,21 @@ services:
       CL_JOB_BACKEND: redis
       CL_REDIS_URL: redis://redis:6379/0
       CL_EMAIL_BACKEND: ${CL_EMAIL_BACKEND:-console}
+      # first-boot admin bootstrap (optional; remove after first start)
+      CL_ADMIN_EMAIL: ${CL_ADMIN_EMAIL:-}
+      CL_ADMIN_PASSWORD: ${CL_ADMIN_PASSWORD:-}
+      CL_ADMIN_NAME: ${CL_ADMIN_NAME:-Administrator}
+      # split-frontend deployments only (SPA on another origin)
+      CL_CORS_ORIGINS: ${CL_CORS_ORIGINS:-}
+      # web push (optional): python -m app.push --generate-keys
+      CL_VAPID_PUBLIC_KEY: ${CL_VAPID_PUBLIC_KEY:-}
+      CL_VAPID_PRIVATE_KEY: ${CL_VAPID_PRIVATE_KEY:-}
+      CL_VAPID_SUBJECT: ${CL_VAPID_SUBJECT:-mailto:admin@civiclens.et}
     volumes:
       - mediadata:/data/storage
     ports:
       - "8000:8000"
-    command: >
-      sh -c "python -m alembic upgrade head && python seed.py &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # docker-entrypoint.sh: migrate -> seed (base-only in production) -> serve
 
   worker:
     build: .
@@ -71,9 +79,13 @@ services:
       CL_AI_SERVICE_URL: http://ai:8090
       CL_JOB_BACKEND: redis
       CL_REDIS_URL: redis://redis:6379/0
+      CL_WORKER_CONCURRENCY: ${CL_WORKER_CONCURRENCY:-2}
+      CL_VAPID_PUBLIC_KEY: ${CL_VAPID_PUBLIC_KEY:-}
+      CL_VAPID_PRIVATE_KEY: ${CL_VAPID_PRIVATE_KEY:-}
+      CL_VAPID_SUBJECT: ${CL_VAPID_SUBJECT:-mailto:admin@civiclens.et}
     volumes:
       - mediadata:/data/storage
-    command: python -m app.worker
+    command: worker
 
   # Optional: local Ollama for real vision/LLM analysis (needs ~8GB RAM+)
   # ollama:

@@ -1,0 +1,114 @@
+# ============================================================================
+# CivicLens Ethiopia — Render.com Blueprint (one-click full-stack deploy)
+#
+#   1. Push this repository to GitHub/GitLab
+#   2. Render Dashboard -> New -> Blueprint -> select the repo
+#   3. Fill the prompted secrets (CL_SECRET_KEY, CL_ADMIN_*)
+#
+# Deploys: API+SPA (Docker), Redis job worker, private AI service,
+#          managed PostgreSQL, managed Key Value (Redis).
+# The SPA is baked into the API image, so everything is same-origin —
+# no CORS / cookie configuration needed.
+# ============================================================================
+services:
+  # ---- API + frontend (single image; entrypoint migrates + seeds + serves) ----
+  - type: web
+    name: civiclens-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    # NOTE (free/starter tiers): local disk is ephemeral. Attach a Render Disk
+    # at /data/storage, or set CL_STORAGE_BACKEND=s3 + S3 credentials.
+    disk:
+      name: civiclens-media
+      mountPath: /data/storage
+      sizeGB: 10
+    envVars:
+      - key: CL_ENV
+        value: production
+      - key: CL_SECRET_KEY
+        generateValue: true
+      - key: CL_DATABASE_URL
+        fromDatabase:
+          name: civiclens-db
+          property: connectionString
+      - key: CL_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: civiclens-redis
+          property: connectionString
+      - key: CL_JOB_BACKEND
+        value: redis
+      - key: CL_STORAGE_DIR
+        value: /data/storage
+      - key: CL_AI_SERVICE_URL
+        fromService:
+          type: pserv
+          name: civiclens-ai
+          property: hostport   # bare host:port — backend adds http:// itself
+      - key: CL_SEED_DEMO_DATA
+        value: "false"
+      - key: CL_CREATE_DEMO_ACCOUNTS
+        value: "false"
+      # first admin account (idempotent; remove after first deploy)
+      - key: CL_ADMIN_EMAIL
+        sync: false
+      - key: CL_ADMIN_PASSWORD
+        sync: false
+      - key: CL_EMAIL_BACKEND
+        value: console          # switch to smtp + CL_SMTP_* for real e-mail
+
+  # ---- background job worker (same image, "worker" arg) ----
+  - type: worker
+    name: civiclens-worker
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: ./docker-entrypoint.sh worker
+    envVars:
+      - key: CL_ENV
+        value: production
+      - key: CL_DATABASE_URL
+        fromDatabase:
+          name: civiclens-db
+          property: connectionString
+      - key: CL_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: civiclens-redis
+          property: connectionString
+      - key: CL_JOB_BACKEND
+        value: redis
+      - key: CL_STORAGE_DIR
+        value: /data/storage
+      - key: CL_AI_SERVICE_URL
+        fromService:
+          type: pserv
+          name: civiclens-ai
+          property: hostport
+
+  # ---- local AI analysis service (private — not exposed to the internet) ----
+  - type: pserv
+    name: civiclens-ai
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./ai-service/Dockerfile
+    dockerContext: ./ai-service
+    envVars:
+      - key: AI_MODEL
+        value: heuristic        # ollama needs a GPU/VM — see DEPLOYMENT.md
+
+  # ---- Redis (jobs queue + shared rate limiting) ----
+  - type: keyvalue
+    name: civiclens-redis
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []             # internal connections only
+
+databases:
+  - name: civiclens-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"

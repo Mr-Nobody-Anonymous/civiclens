@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import Base, SessionLocal, engine
-from .routers import admin as admin_router, auth, dashboard, orgs, reports
+from .routers import admin as admin_router, auth, community, dashboard, moderation, orgops, orgs, push as push_router, reports, security2, transparency, trust, uploads
 from .security import csrf_protect
 
 logging.basicConfig(
@@ -36,10 +36,16 @@ app = FastAPI(
     ),
 )
 
+# CORS: same-origin deployments need none of this (empty list). Split
+# deployments (SPA on Vercel/Netlify/CDN, API elsewhere) set CL_CORS_ORIGINS
+# to the exact frontend origins. Dev keeps the permissive wildcard.
+_cors = settings.cors_origin_list or (["*"] if settings.env == "development" else [])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.env == "development" else [],
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    allow_origins=_cors,
+    allow_credentials=bool(settings.cors_origin_list) or settings.env == "development",
+    allow_methods=["*"], allow_headers=["*"],
+    expose_headers=["X-Request-Id"],
 )
 
 
@@ -74,6 +80,11 @@ async def request_pipeline(request: Request, call_next):
     if request.url.path.startswith("/api"):
         log.info("rid=%s %s %s -> %s %.0fms", rid, request.method, request.url.path,
                  resp.status_code, dur)
+        try:
+            from .metrics import track_request
+            track_request(request.method, request.url.path, resp.status_code, dur / 1000)
+        except Exception:
+            pass
 
     # security headers
     resp.headers["X-Request-ID"] = rid
@@ -110,11 +121,35 @@ app.include_router(orgs.rules_router)
 app.include_router(dashboard.router)
 app.include_router(dashboard.misc_router)
 app.include_router(admin_router.router)
+app.include_router(trust.router)
+app.include_router(moderation.router)
+app.include_router(uploads.router)
+app.include_router(community.router)
+app.include_router(orgops.router)
+app.include_router(security2.router)
+app.include_router(transparency.router)
+app.include_router(push_router.router)
+
+
+@app.on_event("startup")
+async def _register_event_loop():
+    import asyncio
+    from .events import register_loop
+    register_loop(asyncio.get_running_loop())
 
 
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": settings.app_name, "env": settings.env}
+
+
+@app.get("/api/metrics", include_in_schema=False)
+def metrics(request: Request):
+    """Prometheus scrape endpoint. In production restrict to the monitoring
+    network at the reverse proxy (deny /api/metrics publicly)."""
+    from fastapi.responses import PlainTextResponse
+    from .metrics import render
+    return PlainTextResponse(render(), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/api/ready")
@@ -130,7 +165,7 @@ def ready():
     except Exception as e:
         checks["database"] = f"error: {type(e).__name__}"
     try:
-        r = httpx.get(f"{settings.ai_service_url}/health", timeout=3)
+        r = httpx.get(f"{settings.ai_url}/health", timeout=3)
         checks["ai_service"] = r.json().get("model", "ok") if r.status_code == 200 else "error"
     except Exception:
         checks["ai_service"] = "unreachable (reports fall back to manual review)"
@@ -141,6 +176,8 @@ def ready():
             checks["redis"] = "ok"
         except Exception:
             checks["redis"] = "unreachable"
+    from .circuit import breaker_states
+    checks["circuits"] = breaker_states()
     healthy = checks.get("database") == "ok"
     return JSONResponse({"ready": healthy, "checks": checks}, status_code=200 if healthy else 503)
 

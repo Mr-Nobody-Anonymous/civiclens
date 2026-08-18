@@ -69,9 +69,10 @@ def test_reopen_by_reporter(citizen_client, admin_client):
         "title": "Reopen test report", "description": "The issue that will be resolved and disputed.",
         "category": "Water", "city": "Addis Ababa"})
     rid = r.json()["id"]
-    # admin resolves (via valid chain)
+    # admin resolves (via valid chain; Water requires evidence -> admin override with note)
     admin_client.patch(f"/api/reports/{rid}/status", json={"status": "under_review"})
-    admin_client.patch(f"/api/reports/{rid}/status", json={"status": "resolved"})
+    admin_client.patch(f"/api/reports/{rid}/status",
+                       json={"status": "resolved", "note": "verified on site (test override)"})
     # citizen reopens/disputes
     resp = citizen_client.post(f"/api/reports/{rid}/reopen?reason=Still broken")
     assert resp.status_code == 200
@@ -82,7 +83,8 @@ def test_reopen_by_reporter(citizen_client, admin_client):
     stranger = TestClient(app)
     stranger.post("/api/auth/register", json={
         "name": "Stranger", "email": "stranger@test.et", "password": "stranger-pass1"})
-    admin_client.patch(f"/api/reports/{rid}/status", json={"status": "resolved"})
+    admin_client.patch(f"/api/reports/{rid}/status",
+                       json={"status": "resolved", "note": "verified again (test override)"})
     assert stranger.post(f"/api/reports/{rid}/reopen").status_code == 403
 
 

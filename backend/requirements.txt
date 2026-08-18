@@ -13,3 +13,5 @@ redis>=5.0
 # psycopg[binary]>=3.1
 # tests
 pytest>=8.0
+# optional: web push notifications (CL_VAPID_* keys)
+pywebpush>=2.0

@@ -100,3 +100,116 @@ def test_ollama_unknown_category_sanitized(monkeypatch):
     assert out.category in m.CATEGORIES
     assert 1 <= out.severity <= 5
     assert 0 < out.confidence <= 0.99
+
+
+# ---------------- Phase C: deep Amharic + language detection ----------------
+AMHARIC_EVAL = [
+    # (description, expected_category) — the Amharic accuracy dataset
+    ("በቦሌ አካባቢ ያለው መንገድ በጣም ተበላሽቷል፤ ጉድጓድ አለ", "Roads & Transportation"),
+    ("በሰፈራችን ውሃው ተቋርጧል፤ ብዙ ቀናት ሆኖታል", "Water"),
+    ("ቆሻሻው ተከምሯል፤ ሽታው በጣም ከባድ ነው", "Garbage & Sanitation"),
+    ("ኔትወርኩ ተቋርጧል፤ ስልክ መደወል አልተቻለም", "Telecom"),
+    ("የመንገድ መብራት አይሰራም፤ ሌሊት አደገኛ ነው", "Electricity"),
+    ("ትምህርት ቤቱ ክፍል ተበላሽቷል፤ ተማሪዎች ተጎድተዋል", "Education"),
+]
+
+
+def test_amharic_eval_dataset():
+    """Amharic accuracy evaluation: >= 5/6 categories must classify correctly."""
+    correct = 0
+    for desc, expected in AMHARIC_EVAL:
+        r = client.post("/analyze", json={"title": desc[:30], "description": desc})
+        if r.json()["category"] == expected:
+            correct += 1
+    assert correct >= 5, f"Amharic eval below threshold: {correct}/{len(AMHARIC_EVAL)}"
+
+
+def test_amharic_reasoning_in_amharic():
+    r = client.post("/analyze", json={
+        "title": "መንገዱ ተበላሽቷል",
+        "description": "በቦሌ ያለው መንገድ ጉድጓድ አለው፤ አስቸኳይ ነው፤ መኪናዎች ተጎድተዋል።"})
+    reasoning = r.json()["reasoning"]
+    assert any('\u1200' <= ch <= '\u137f' for ch in reasoning), "reasoning must be in Amharic"
+
+
+def test_mixed_language_understanding():
+    """Amharic/English mixed text still classifies via combined keywords."""
+    r = client.post("/analyze", json={
+        "title": "Network problem in Bole",
+        "description": "ኔትወርኩ down ነው since Monday, no internet, ስልክ አይሰራም"})
+    assert r.json()["category"] == "Telecom"
+
+
+def test_language_detection():
+    from main import detect_language
+    assert detect_language("መንገዱ በጣም ተበላሽቷል") == "am"
+    assert detect_language("the road is very damaged") == "en"
+    assert detect_language("road ተበላሽቷል በጣም ጉድጓድ አለው") == "am"   # Ethiopic-dominant
+
+
+def test_amharic_severity_signals():
+    low = client.post("/analyze", json={"title": "ቆሻሻ", "description": "ትንሽ ቆሻሻ አለ"}).json()
+    high = client.post("/analyze", json={
+        "title": "አደጋ", "description":
+        "የወደቀ ገመድ አለ፤ በጣም አደገኛ ነው፤ ልጆች ይጫወታሉ፤ አስቸኳይ እርዳታ ያስፈልጋል፤ ሁሉም ሰፈር ተጎድቷል"}).json()
+    assert high["severity"] > low["severity"]
+
+
+# ---------------- Phase C: voice transcription endpoint ----------------
+def test_transcribe_rejects_empty_and_garbage():
+    r = client.post("/transcribe", content=b"xx")
+    assert "error" in r.json()
+    r = client.post("/transcribe", content=b"not-really-audio" * 100)
+    assert "error" in r.json()
+
+
+def test_transcribe_real_audio():
+    """Real WAV through the full pipeline: ffmpeg -> whisper -> draft.
+    Uses a synthesized sine tone; whisper returns empty/no-speech -> graceful,
+    OR on models that hallucinate, a draft. Both paths must not 500."""
+    import subprocess, tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        wav = os.path.join(td, "t.wav")
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                        "sine=frequency=440:duration=2", "-ar", "16000", wav],
+                       capture_output=True, timeout=60, check=True)
+        audio = open(wav, "rb").read()
+    r = client.post("/transcribe", content=audio)
+    assert r.status_code == 200
+    data = r.json()
+    # either clean no-speech error or a transcript with a reviewed draft
+    assert "error" in data or ("text" in data and "draft" in data and "note" in data)
+
+
+# ---------------- Afaan Oromo + Tigrinya (v1.4) ----------------
+
+def test_language_detection_oromo_tigrinya():
+    from main import detect_language
+    assert detect_language("Daandii keessa boolla guddaa jira, konkolaataan darbuu hin danda'u") == "om"
+    assert detect_language("ኣብ መንገዲ ዓቢ ጉድጓድ ኣሎ እዩ፣ መኪና ክሓልፍ ኣይክእልን") == "ti"
+    # Amharic must NOT be mistaken for Tigrinya
+    assert detect_language("መንገዱ ላይ ትልቅ ጉድጓድ አለ፤ መኪናዎች ተጎድተዋል") == "am"
+    # English must NOT be mistaken for Oromo
+    assert detect_language("The main road has a dangerous pothole near the market") == "en"
+
+
+def test_classification_oromo():
+    r = client.post("/analyze", json={
+        "title": "Boolla daandii irratti",
+        "description": "Daandii keessa boolla guddaa jira, konkolaataan miidhamaa jiru, balaa guddaa dha",
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["category"] == "Roads & Transportation"
+    assert 1 <= data["severity"] <= 5
+
+
+def test_classification_tigrinya():
+    r = client.post("/analyze", json={
+        "title": "ጸገም ማይ",
+        "description": "ማይ የለን ካብ ሰሉስ ጀሚሩ እዩ፣ ቡምባ ተሰይሩ ምፍሳስ ኣሎ፣ ዓቢ ጸገም እዩ",
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["category"] == "Water"
+    assert 1 <= data["severity"] <= 5

@@ -28,6 +28,21 @@ def route_report(db: DBSession, report: Report, ai_category: Optional[str],
     scored: list = []
     for idx, rule in enumerate(rules):
         score = 0.0
+        # geographic rules (category + location + jurisdiction) beat everything
+        # when the report falls inside their geofence
+        if rule.latitude is not None and rule.radius_m:
+            if report.latitude is None:
+                continue          # geo rule can't match a report without coordinates
+            import math
+            R = 6371000.0
+            p1, p2 = math.radians(report.latitude), math.radians(rule.latitude)
+            dp = math.radians(rule.latitude - report.latitude)
+            dl = math.radians(rule.longitude - report.longitude)
+            a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+            dist = 2 * R * math.asin(math.sqrt(a))
+            if dist > rule.radius_m:
+                continue          # outside jurisdiction
+            score += 25           # inside geofence: strongest signal
         # city-specific rules beat national ones when they match
         if rule.city:
             if report.city and rule.city.lower() == report.city.lower():

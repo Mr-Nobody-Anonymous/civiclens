@@ -49,7 +49,7 @@ export default function Reports() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold md:text-3xl">{t('explore')}</h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{data ? `${data.total} report(s)` : '…'}</p>
+          <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">{data ? `${data.total} report(s)` : '…'}</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => set('sort', sort === 'severity' ? 'recent' : 'severity')}
@@ -63,7 +63,7 @@ export default function Reports() {
       {/* filters */}
       <div className="card mt-5 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-500 dark:text-ink-400" />
           <input aria-label="Search" className="input !pl-9" placeholder={t('search')} defaultValue={q}
             onKeyDown={e => { if (e.key === 'Enter') set('q', (e.target as HTMLInputElement).value) }}
             onBlur={e => set('q', e.target.value)} />

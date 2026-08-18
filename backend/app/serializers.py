@@ -61,6 +61,10 @@ def report_public(r: Report, dup_code: Optional[str] = None) -> dict:
         "address": approx_address(r.address),
         "organization_name": r.organization.name if r.organization else None,
         "is_demo": r.is_demo, "created_at": r.created_at, "resolved_at": r.resolved_at,
+        "cluster_id": r.cluster_id,
+        "resolution_confirmed": r.resolution_confirmed,
+        "resolution_check_score": r.resolution_check_score,
+        "resolution_check_notes": r.resolution_check_notes,
         "media": [media_out(m) for m in r.media if m.kind != "resolution" or r.status.value == "resolved"],
         "ai": ai_out(r.ai),
         "duplicate_of_code": dup_code,
@@ -77,6 +81,9 @@ def report_privileged(r: Report, dup_code: Optional[str] = None) -> dict:
         "user_category": r.user_category,
         "routing_state": r.routing_state,
         "processing_error": r.processing_error,
+        "integrity_score": r.integrity_score,
+        "integrity_notes": r.integrity_notes,
+        "acknowledged_at": r.acknowledged_at,
         "latitude": r.latitude, "longitude": r.longitude,   # exact coords for staff
     })
     return d

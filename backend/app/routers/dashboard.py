@@ -8,7 +8,7 @@ from ..db import get_db
 from ..models import (OPEN_STATUSES, AuditLog, Notification, Organization,
                       OrganizationUser, Report, ReportAIAnalysis, ReportStatus,
                       Role, User)
-from ..security import get_current_user, require_staff, require_user
+from ..security import require_staff, require_user
 from ..serializers import report_privileged
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])

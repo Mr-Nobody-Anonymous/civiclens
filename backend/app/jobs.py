@@ -21,7 +21,7 @@ from .config import settings
 from .db import SessionLocal
 from . import media as mediaproc
 from .models import (Job, Report, ReportAIAnalysis, ReportAssignment,
-                     ReportStatus, ReportStatusHistory, User)
+                     ReportStatus, User)
 from .notify import notify
 from .routing import route_report
 from .state_machine import transition
@@ -87,10 +87,17 @@ def execute_job(job_id: str):
     finally:
         db.close()
 
+    import time as _time
+    _t0 = _time.time()
     try:
         HANDLERS[name](**kwargs)
         _finish(job_id, "done")
+        from .metrics import inc, observe
+        inc("civiclens_jobs_total", {"name": name, "status": "done"})
+        observe("civiclens_job_seconds", _time.time() - _t0, {"name": name})
     except Exception as e:
+        from .metrics import inc as _inc2
+        _inc2("civiclens_jobs_total", {"name": name, "status": "failed"})
         log.exception("job %s (%s) failed", job_id, name)
         db = SessionLocal()
         try:
@@ -202,8 +209,17 @@ def process_report(report_id: str):
         ai = None
         ai_error = None
         try:
-            r = httpx.post(f"{settings.ai_service_url}/analyze", json=payload, timeout=300)
-            r.raise_for_status()
+            from .circuit import ai_breaker
+            from .metrics import inc, observe as m_observe
+            import time as _t
+            _t0 = _t.time()
+            def _call():
+                resp = httpx.post(f"{settings.ai_url}/analyze", json=payload, timeout=300)
+                resp.raise_for_status()
+                return resp
+            r = ai_breaker.call(_call)
+            m_observe("civiclens_ai_seconds", _t.time() - _t0)
+            inc("civiclens_ai_requests_total", {"outcome": "success"})
             ai = r.json()
             # validate the AI contract — unknown categories/invalid severity are rejected
             from .models import CATEGORIES
@@ -212,6 +228,8 @@ def process_report(report_id: str):
             ai["severity"] = max(1, min(5, int(ai.get("severity", 3))))
             ai["confidence"] = max(0.0, min(1.0, float(ai.get("confidence", 0.5))))
         except Exception as e:
+            from .metrics import inc as _inc
+            _inc("civiclens_ai_requests_total", {"outcome": "failure"})
             ai = None
             ai_error = f"{type(e).__name__}: {e}"[:500]
             log.warning("AI analysis unavailable (%s); manual review", ai_error)
@@ -222,6 +240,16 @@ def process_report(report_id: str):
             input_kind += "+frames"
         if images_b64:
             input_kind += "+images"
+
+        # ---- evidence integrity pipeline (never accusatory; low scores queue review) ----
+        try:
+            from .integrity import evaluate_report
+            iscore, inotes = evaluate_report(db, report)
+            report.integrity_score = iscore
+            report.integrity_notes = " · ".join(inotes)[:1000]
+            db.commit()
+        except Exception:
+            log.exception("integrity evaluation failed (non-fatal)")
 
         if ai:
             db.add(ReportAIAnalysis(
@@ -241,6 +269,31 @@ def process_report(report_id: str):
                 report.issue_type = ai["issue_type"]
                 report.severity = ai["severity"]
 
+            # ---- human-review queue: confidence + severity + disagreement + integrity ----
+            try:
+                from .review import queue_reviews_for
+                analysis_row = db.query(ReportAIAnalysis).filter_by(report_id=report.id).first()
+                queued = queue_reviews_for(db, report, analysis_row)
+                if queued:
+                    log.info("report %s queued for human review: %s",
+                             report.id, [q.reason for q in queued])
+            except Exception:
+                log.exception("review queueing failed (non-fatal)")
+
+            # ---- issue clustering: associate with the underlying civic issue ----
+            try:
+                from .clustering import assign_cluster
+                assign_cluster(db, report)
+            except Exception:
+                log.exception("clustering failed (non-fatal)")
+
+            # ---- subscriptions: notify followers of cluster/category/area ----
+            try:
+                from .routers.community import notify_subscribers
+                notify_subscribers(db, report)
+            except Exception:
+                log.exception("subscriber fan-out failed (non-fatal)")
+
             # ---- routing rules ----
             org, rule = route_report(db, report, ai["category"],
                                      f"{report.title} {report.description}")
@@ -251,8 +304,9 @@ def process_report(report_id: str):
                 db.add(ReportAssignment(report_id=report.id, organization_id=org.id,
                                         source="rule" if rule else "ai",
                                         note=f"Routed by rule (category: {ai['category']})"))
-                # Confidence gate: auto-assign requires rule.auto_assign AND high confidence
-                if rule and rule.auto_assign and ai["confidence"] >= settings.ai_conf_high:
+                # Auto-assign gate: rule opts in AND high confidence AND clean integrity
+                integrity_ok = (report.integrity_score is None or report.integrity_score >= 0.6)
+                if rule and rule.auto_assign and ai["confidence"] >= settings.ai_conf_high and integrity_ok:
                     transition(db, report, ReportStatus.assigned, force=True,
                                note=f"Auto-assigned to {org.name} (rule + confidence "
                                     f"{int(ai['confidence']*100)}%)")

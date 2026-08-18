@@ -1,0 +1,10 @@
+{
+  "category_accuracy_en": 1.0,
+  "category_accuracy_am": 1.0,
+  "category_accuracy_mixed": 1.0,
+  "severity_ordering": 1.0,
+  "adversarial_robustness": 1.0,
+  "language_detection": 1.0,
+  "category_accuracy_om": 1.0,
+  "category_accuracy_ti": 1.0
+}

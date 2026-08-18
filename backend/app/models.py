@@ -87,6 +87,11 @@ class User(Base):
     language = Column(String(8), default="en")
     city = Column(String(64))
     email_notifications = Column(Boolean, default=True)
+    notif_prefs = Column(Text)
+    email_verified = Column(Boolean, default=False)
+    mfa_secret = Column(String(64))            # TOTP secret (base32); None = not set up
+    mfa_enabled = Column(Boolean, default=False)
+    mfa_backup_codes = Column(Text)            # JSON list of HASHED one-time codes                # JSON: {"status_changes":true,"resolution":true,...}
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=now)
 
@@ -155,12 +160,50 @@ class OrganizationUser(Base):
     id = Column(String(32), primary_key=True, default=gen_uuid)
     organization_id = Column(String(32), ForeignKey("organizations.id"), nullable=False, index=True)
     user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
-    org_role = Column(String(32), default="member")  # member | manager
+    org_role = Column(String(32), default="member")  # member | supervisor | manager
+    department_id = Column(String(32), ForeignKey("departments.id"))
     created_at = Column(DateTime(timezone=True), default=now)
     __table_args__ = (UniqueConstraint("organization_id", "user_id"),)
 
     user = relationship("User", back_populates="org_links")
     organization = relationship("Organization")
+
+
+class Department(Base):
+    """Org sub-unit: district/team with optional geographic responsibility."""
+    __tablename__ = "departments"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    organization_id = Column(String(32), ForeignKey("organizations.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    city = Column(String(64))
+    latitude = Column(Float)              # geographic responsibility (geofence)
+    longitude = Column(Float)
+    radius_m = Column(Integer)
+    created_at = Column(DateTime(timezone=True), default=now)
+    organization = relationship("Organization")
+
+
+class StaffInvite(Base):
+    """Staff invitation workflow: admin/org manager invites by email; the
+    invitee registers (or logs in) with the token and is attached to the org."""
+    __tablename__ = "staff_invites"
+    token = Column(String(64), primary_key=True)
+    organization_id = Column(String(32), ForeignKey("organizations.id"), nullable=False)
+    department_id = Column(String(32), ForeignKey("departments.id"))
+    email = Column(String(255), nullable=False, index=True)
+    org_role = Column(String(32), default="member")
+    invited_by = Column(String(32), ForeignKey("users.id"))
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    accepted = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=now)
+
+
+class EmailToken(Base):
+    __tablename__ = "email_tokens"
+    token = Column(String(64), primary_key=True)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used = Column(Boolean, default=False)
 
 
 class OrganizationRule(Base):
@@ -170,6 +213,9 @@ class OrganizationRule(Base):
     category = Column(String(64), nullable=False, index=True)
     keywords = Column(Text)                   # comma separated, optional
     city = Column(String(64))                 # optional: city-specific routing
+    latitude = Column(Float)                  # optional geofence center
+    longitude = Column(Float)
+    radius_m = Column(Integer)                # geofence radius; rule wins inside it
     organization_id = Column(String(32), ForeignKey("organizations.id"), nullable=False)
     priority = Column(Integer, default=100)   # lower wins
     auto_assign = Column(Boolean, default=False)  # if True skip human review
@@ -205,6 +251,14 @@ class Report(Base):
     processing_error = Column(Text)
     human_confirmed = Column(Boolean, default=False)   # human confirmed/overrode classification
     duplicate_of_id = Column(String(32), ForeignKey("reports.id"))
+    cluster_id = Column(String(32), ForeignKey("issue_clusters.id"), index=True)
+    integrity_score = Column(Float)                    # 0..1 evidence-quality composite
+    integrity_notes = Column(Text)                     # human-readable signal summary
+    acknowledged_at = Column(DateTime(timezone=True))  # SLA: org first response
+    resolution_confirmed = Column(Boolean)             # citizen confirmed the fix
+    resolution_check_score = Column(Float)             # advisory before/after comparison 0..1
+    resolution_check_notes = Column(Text)              # advisory text (clearly labelled)
+    client_key = Column(String(64), index=True)        # offline idempotency key
     is_demo = Column(Boolean, default=False)
     is_flagged = Column(Boolean, default=False)
     flag_reason = Column(String(255))
@@ -233,6 +287,9 @@ class ReportMedia(Base):
     duration_s = Column(Float)
     width = Column(Integer)
     height = Column(Integer)
+    sha256 = Column(String(64), index=True)           # evidence integrity chain
+    phash = Column(String(20), index=True)            # perceptual hash (visual duplicates)
+    frame_sigs = Column(Text)                          # JSON [phash,...] per extracted video frame
     original_name = Column(String(255))
     uploaded_by = Column(String(32), ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), default=now)
@@ -267,6 +324,93 @@ class ReportAIAnalysis(Base):
     report = relationship("Report", back_populates="ai")
 
 
+class AIReview(Base):
+    """Human-review queue entry for AI recommendations. Created automatically
+    when confidence/consistency signals warrant it; resolved by moderators.
+    Every decision is preserved: AI prediction -> human correction dataset."""
+    __tablename__ = "ai_reviews"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    report_id = Column(String(32), ForeignKey("reports.id"), nullable=False, index=True)
+    analysis_id = Column(String(32), ForeignKey("report_ai_analysis.id"))
+    reason = Column(String(32), nullable=False, index=True)
+    # low_confidence | high_severity | ai_disagreement | integrity_flag | manual
+    detail = Column(Text)                       # explanation of why it was queued
+    status = Column(String(16), default="pending", index=True)  # pending | accepted | corrected | rejected
+    # human decision
+    reviewer_id = Column(String(32), ForeignKey("users.id"))
+    decided_at = Column(DateTime(timezone=True))
+    corrected_category = Column(String(64))
+    corrected_severity = Column(Integer)
+    decision_reason = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+    report = relationship("Report")
+    analysis = relationship("ReportAIAnalysis")
+    reviewer = relationship("User")
+
+
+class IssueCluster(Base):
+    """One underlying civic issue backed by many reports. Reports link via
+    Report.cluster_id; nothing is ever deleted or merged destructively."""
+    __tablename__ = "issue_clusters"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    title = Column(String(200), nullable=False)
+    category = Column(String(64), index=True)
+    city = Column(String(64), index=True)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    severity = Column(Integer)                 # max severity across member reports
+    report_count = Column(Integer, default=1)
+    unique_reporters = Column(Integer, default=1)
+    first_reported = Column(DateTime(timezone=True))
+    last_reported = Column(DateTime(timezone=True))
+    status = Column(String(32), default="open", index=True)  # open | resolved
+    created_at = Column(DateTime(timezone=True), default=now)
+
+
+class SLAPolicy(Base):
+    """Per-organization response-time rules, keyed by severity band."""
+    __tablename__ = "sla_policies"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    organization_id = Column(String(32), ForeignKey("organizations.id"), index=True)
+    # NULL organization_id = platform default policy
+    min_severity = Column(Integer, default=1)   # applies to severity >= this
+    ack_hours = Column(Integer, nullable=False)      # time to acknowledge
+    resolve_hours = Column(Integer, nullable=False)  # time to resolve
+    created_at = Column(DateTime(timezone=True), default=now)
+
+    organization = relationship("Organization")
+
+
+class EscalationEvent(Base):
+    __tablename__ = "escalation_events"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    report_id = Column(String(32), ForeignKey("reports.id"), nullable=False, index=True)
+    organization_id = Column(String(32), ForeignKey("organizations.id"))
+    kind = Column(String(24), nullable=False)   # ack_breach | resolve_breach
+    overdue_hours = Column(Float)
+    notified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
+class UploadSession(Base):
+    """Resumable chunked upload session. Chunks land in temp storage; complete()
+    assembles, verifies the checksum, and runs the full media validation pipeline."""
+    __tablename__ = "upload_sessions"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    report_id = Column(String(32), ForeignKey("reports.id"), nullable=False, index=True)
+    user_id = Column(String(32), ForeignKey("users.id"))
+    filename = Column(String(255))
+    content_type = Column(String(80), nullable=False)
+    kind = Column(String(16), default="auto")
+    total_size = Column(Integer, nullable=False)
+    total_chunks = Column(Integer, nullable=False)
+    received = Column(Text, default="")          # comma list of received chunk indexes
+    sha256 = Column(String(64))                  # client-declared checksum (optional)
+    status = Column(String(16), default="pending", index=True)  # pending|complete|aborted
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
 class ReportStatusHistory(Base):
     __tablename__ = "report_status_history"
     id = Column(String(32), primary_key=True, default=gen_uuid)
@@ -298,6 +442,8 @@ class ReportComment(Base):
     user_id = Column(String(32), ForeignKey("users.id"))
     body = Column(Text, nullable=False)
     internal = Column(Boolean, default=False)   # internal notes hidden from public
+    is_flagged = Column(Boolean, default=False) # reported by users, pending moderation
+    hidden = Column(Boolean, default=False)     # moderator-hidden (reversible, never deleted)
     created_at = Column(DateTime(timezone=True), default=now)
     user = relationship("User")
 
@@ -313,6 +459,48 @@ class Notification(Base):
     channel = Column(String(16), default="inapp")   # inapp | email (extensible: sms, telegram)
     read = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime(timezone=True), default=now)
+
+
+class Subscription(Base):
+    """Citizen follows a report, cluster, category, or geographic area."""
+    __tablename__ = "subscriptions"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    target_type = Column(String(16), nullable=False)   # report | cluster | category | area
+    target_id = Column(String(64))                     # report/cluster id or category name
+    latitude = Column(Float)                           # area subscriptions
+    longitude = Column(Float)
+    radius_m = Column(Integer, default=1000)
+    label = Column(String(120))
+    created_at = Column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("user_id", "target_type", "target_id"),)
+
+
+class CommunityVote(Base):
+    """Community verification: is this issue still present? Votes are evidence
+    for humans/organizations — never authority. One vote per user per report."""
+    __tablename__ = "community_votes"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    report_id = Column(String(32), ForeignKey("reports.id"), nullable=False, index=True)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    vote = Column(String(16), nullable=False)          # still_exists | resolved | not_sure
+    created_at = Column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("report_id", "user_id"),)
+
+
+class PushSubscription(Base):
+    """Web Push (VAPID) subscription for a user's browser/device.
+    One row per endpoint; a user may have several devices."""
+    __tablename__ = "push_subscriptions"
+    id = Column(String(32), primary_key=True, default=gen_uuid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False)            # unique per browser+site
+    p256dh = Column(String(255), nullable=False)       # client public key
+    auth = Column(String(255), nullable=False)         # client auth secret
+    user_agent = Column(String(255))
+    created_at = Column(DateTime(timezone=True), default=now)
+    last_used_at = Column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("user_id", "endpoint"),)
 
 
 class AuditLog(Base):

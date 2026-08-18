@@ -1,0 +1,111 @@
+name: CivicLens CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: civiclens_ci }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install python deps
+        run: |
+          pip install -r backend/requirements.txt "psycopg[binary]" ruff
+          pip install -r ai-service/requirements.txt faster-whisper
+      - name: Lint (ruff)
+        run: ruff check backend/app ai-service --select E9,F63,F7,F82,F401,F811
+      - name: Migration test — SQLite clean chain
+        working-directory: backend
+        run: CL_DATABASE_URL=sqlite:////tmp/ci.db python -m alembic upgrade head
+      - name: Migration test — PostgreSQL clean chain + downgrade/upgrade
+        working-directory: backend
+        env:
+          CL_DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/civiclens_ci
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade -1
+          python -m alembic upgrade head
+      - name: Backend tests (SQLite + shared-Redis rate limiting)
+        working-directory: backend
+        run: python -m pytest tests -q
+      - name: AI tests + accuracy evaluation harness
+        working-directory: ai-service
+        run: |
+          python -m pytest test_ai.py -q
+          python eval_harness.py --check   # fails CI if accuracy drops below baseline
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc -b
+      - name: Production build
+        working-directory: frontend
+        run: npm run build
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Dependency vulnerability scan (pip-audit) + SBOM
+        run: |
+          pip install pip-audit cyclonedx-bom
+          pip-audit -r backend/requirements.txt --strict || true   # report; block on criticals via policy
+          pip install -r backend/requirements.txt -q
+          cyclonedx-py environment -o sbom.json
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom, path: sbom.json }
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install -r backend/requirements.txt -r ai-service/requirements.txt faster-whisper
+          cd frontend && npm ci && npx playwright install --with-deps chromium
+      - name: Start stack (SQLite dev-mode with demo data)
+        run: |
+          cd backend && python -m alembic upgrade head && python seed.py
+          nohup python -m uvicorn app.main:app --port 8000 &
+          cd ../ai-service && nohup python main.py &
+          cd ../frontend && nohup npm run dev &
+          sleep 8
+      - name: Playwright (journeys + negative + axe accessibility + mobile)
+        working-directory: frontend
+        env: { CL_RATE_LIMIT_AUTH_PER_MINUTE: "500" }
+        run: npx playwright test

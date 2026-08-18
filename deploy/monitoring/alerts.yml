@@ -1,0 +1,63 @@
+# CivicLens Prometheus alert rules.
+# Every alert maps to a metric the API actually exposes (see backend/app/metrics.py).
+groups:
+  - name: civiclens
+    rules:
+      - alert: CivicLensApiDown
+        expr: up{job="civiclens-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "CivicLens API is unreachable"
+          description: "Prometheus cannot scrape /api/metrics for 2 minutes."
+
+      - alert: CivicLensWorkerStalled
+        expr: civiclens_worker_heartbeat_age_seconds > 120
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Job worker heartbeat is stale ({{ $value }}s)"
+          description: "Reports will stall in ai_analysis. Restart the worker; check Redis."
+
+      - alert: CivicLensQueueBacklog
+        expr: civiclens_queue_depth > 25
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Job queue backlog ({{ $value }} queued)"
+          description: >
+            Sustained backlog — scale workers up (see DEPLOYMENT.md 'Worker scaling':
+            raise CL_WORKER_CONCURRENCY or add worker replicas).
+
+      - alert: CivicLensDeadJobs
+        expr: civiclens_jobs_gauge{status="dead"} > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} dead job(s) need manual routing"
+          description: "Reports flagged needs_manual_routing in the admin dashboard."
+
+      - alert: CivicLensHighErrorRate
+        expr: >
+          sum(rate(civiclens_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(civiclens_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "HTTP 5xx rate above 5%"
+
+      - alert: CivicLensSlowRequests
+        expr: >
+          histogram_quantile(0.95,
+            sum by (le) (rate(civiclens_http_request_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 latency above 2s"
+
+      - alert: CivicLensAIFailures
+        expr: rate(civiclens_ai_requests_total{outcome="failure"}[10m]) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "AI service failing — reports falling back to manual review"

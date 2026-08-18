@@ -31,7 +31,7 @@ export default function MapPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold"><MapPin className="size-6 text-brand-600" />{t('map')}</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">{points.length} issue(s) shown · markers coloured by severity</p>
+          <p className="text-sm text-ink-500 dark:text-ink-400">{points.length} issue(s) shown · markers coloured by severity</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <select aria-label="Category" className="input !w-auto" value={category} onChange={e => setCategory(e.target.value)}>
@@ -53,7 +53,7 @@ export default function MapPage() {
           className="h-[70vh] min-h-96" />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink-500 dark:text-ink-400">
         <span className="font-semibold">Legend:</span>
         {Object.entries(SEVERITY).map(([k, v]) => (
           <span key={k} className="inline-flex items-center gap-1.5">

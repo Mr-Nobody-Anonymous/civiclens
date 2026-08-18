@@ -1,0 +1,97 @@
+# ============================================================================
+# CivicLens Ethiopia — run on ANY machine from prebuilt images (no build step).
+#
+# Images are published by .github/workflows/deploy.yml to GitHub Container
+# Registry on every push to main. On a fresh server with only Docker:
+#
+#   export CIVICLENS_IMAGE=ghcr.io/OWNER/REPO          # your repo path
+#   cp .env.example .env                               # set the secrets
+#   docker compose -f docker-compose.prebuilt.yml up -d
+#
+# Then open http://<server>:8000 — migrations, base seeding and the first
+# admin account (CL_ADMIN_EMAIL/PASSWORD) happen automatically on first boot.
+# ============================================================================
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: civiclens
+      POSTGRES_USER: civiclens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U civiclens"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  ai:
+    image: ${CIVICLENS_IMAGE:?set CIVICLENS_IMAGE, e.g. ghcr.io/owner/repo}-ai:${CIVICLENS_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      AI_MODEL: ${AI_MODEL:-heuristic}
+    expose: ["8090"]
+
+  api:
+    image: ${CIVICLENS_IMAGE}:${CIVICLENS_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      ai: { condition: service_started }
+    environment:
+      CL_ENV: production
+      CL_SECRET_KEY: ${CL_SECRET_KEY:?set CL_SECRET_KEY in .env}
+      CL_DATABASE_URL: postgresql+psycopg://civiclens:${POSTGRES_PASSWORD}@db:5432/civiclens
+      CL_STORAGE_DIR: /data/storage
+      CL_AI_SERVICE_URL: http://ai:8090
+      CL_JOB_BACKEND: redis
+      CL_REDIS_URL: redis://redis:6379/0
+      CL_EMAIL_BACKEND: ${CL_EMAIL_BACKEND:-console}
+      CL_ADMIN_EMAIL: ${CL_ADMIN_EMAIL:-}
+      CL_ADMIN_PASSWORD: ${CL_ADMIN_PASSWORD:-}
+      CL_ADMIN_NAME: ${CL_ADMIN_NAME:-Administrator}
+      CL_CORS_ORIGINS: ${CL_CORS_ORIGINS:-}
+      CL_VAPID_PUBLIC_KEY: ${CL_VAPID_PUBLIC_KEY:-}
+      CL_VAPID_PRIVATE_KEY: ${CL_VAPID_PRIVATE_KEY:-}
+      CL_VAPID_SUBJECT: ${CL_VAPID_SUBJECT:-mailto:admin@civiclens.et}
+    volumes:
+      - mediadata:/data/storage
+    ports:
+      - "${CIVICLENS_PORT:-8000}:8000"
+
+  worker:
+    image: ${CIVICLENS_IMAGE}:${CIVICLENS_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_started }
+    environment:
+      CL_ENV: production
+      CL_DATABASE_URL: postgresql+psycopg://civiclens:${POSTGRES_PASSWORD}@db:5432/civiclens
+      CL_STORAGE_DIR: /data/storage
+      CL_AI_SERVICE_URL: http://ai:8090
+      CL_JOB_BACKEND: redis
+      CL_REDIS_URL: redis://redis:6379/0
+      CL_WORKER_CONCURRENCY: ${CL_WORKER_CONCURRENCY:-2}
+      CL_VAPID_PUBLIC_KEY: ${CL_VAPID_PUBLIC_KEY:-}
+      CL_VAPID_PRIVATE_KEY: ${CL_VAPID_PRIVATE_KEY:-}
+      CL_VAPID_SUBJECT: ${CL_VAPID_SUBJECT:-mailto:admin@civiclens.et}
+    volumes:
+      - mediadata:/data/storage
+    command: worker
+
+volumes:
+  dbdata:
+  mediadata:
+  redisdata:

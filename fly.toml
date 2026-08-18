@@ -1,0 +1,49 @@
+# CivicLens Ethiopia — Fly.io app (API + SPA in one image).
+#
+#   fly launch --copy-config --no-deploy     # creates the app from this file
+#   fly postgres create && fly postgres attach ...
+#   fly redis create                          # Upstash Redis -> CL_REDIS_URL
+#   fly secrets set CL_SECRET_KEY=$(openssl rand -hex 32) \
+#       CL_DATABASE_URL=postgresql+psycopg://... CL_ADMIN_EMAIL=... CL_ADMIN_PASSWORD=...
+#   fly volumes create civiclens_media --size 10
+#   fly deploy
+#
+# The worker runs as a second process group sharing the same image.
+app = "civiclens"
+primary_region = "jnb"   # Johannesburg — closest region to Ethiopia
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CL_ENV = "production"
+  CL_STORAGE_DIR = "/data/storage"
+  CL_JOB_BACKEND = "redis"
+  CL_SEED_DEMO_DATA = "false"
+  CL_CREATE_DEMO_ACCOUNTS = "false"
+
+[processes]
+  app = "api"
+  worker = "worker"
+
+[http_service]
+  processes = ["app"]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  path = "/api/health"
+  interval = "30s"
+  timeout = "5s"
+
+[[mounts]]
+  source = "civiclens_media"
+  destination = "/data/storage"
+  processes = ["app", "worker"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

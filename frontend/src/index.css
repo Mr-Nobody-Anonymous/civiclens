@@ -1,3 +1,7 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource/noto-sans-ethiopic/400.css";
+@import "@fontsource/noto-sans-ethiopic/600.css";
+@import "@fontsource/noto-sans-ethiopic/700.css";
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
 @import "leaflet.markercluster/dist/MarkerCluster.css";
@@ -5,51 +9,141 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ============================================================
+   CivicLens Ethiopia — design tokens
+   Deep forest green + CivicLens green + emerald + warm gold.
+   Ethiopian colors used as accents, never as wallpaper.
+   ============================================================ */
 @theme {
+  /* brand */
   --color-et-green: #078930;
-  --color-et-yellow: #FCDD09;
+  --color-et-yellow: #F4B942;
   --color-et-red: #DA121A;
-  --color-brand-50: #edfcf2;
-  --color-brand-100: #d4f7e0;
-  --color-brand-200: #adedc6;
-  --color-brand-300: #77dda5;
-  --color-brand-400: #40c57f;
-  --color-brand-500: #1aab64;
-  --color-brand-600: #0d8a50;
-  --color-brand-700: #0b6e42;
-  --color-brand-800: #0b5736;
-  --color-brand-900: #0a482e;
-  --color-brand-950: #04281a;
-  --font-sans: "Inter", "Noto Sans Ethiopic", ui-sans-serif, system-ui, sans-serif;
-  --animate-fade-up: fadeUp .5s ease both;
-  --animate-fade-in: fadeIn .4s ease both;
+  --color-gold-300: #F8D284;
+  --color-gold-400: #F4B942;
+  --color-gold-500: #E0A32E;
+  --color-gold-600: #8A6A1C;
+  --color-gold-700: #6E541A;
+  --color-brand-50: #EDF9F2;
+  --color-brand-100: #D5F2E3;
+  --color-brand-200: #AEE5C9;
+  --color-brand-300: #79D3A8;
+  --color-brand-400: #40BC83;
+  --color-brand-500: #17A05E;
+  --color-brand-600: #0c7d48;
+  --color-brand-700: #0B663D;
+  --color-brand-800: #0A5233;
+  --color-brand-900: #0A3D2C;
+  --color-brand-950: #06281C;
+  /* neutrals tuned slightly warm-green */
+  --color-ink-50: #F6F8F7;
+  --color-ink-100: #EDF1EF;
+  --color-ink-200: #DCE3E0;
+  --color-ink-300: #C2CCC8;
+  --color-ink-400: #94A29C;
+  --color-ink-500: #66756F;
+  --color-ink-600: #4B5853;
+  --color-ink-700: #38423E;
+  --color-ink-800: #232B28;
+  --color-ink-900: #14201B;
+  --color-ink-950: #0B1512;
+
+  --font-sans: "Inter Variable", "Noto Sans Ethiopic", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Inter Variable", "Noto Sans Ethiopic", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+  --radius-3xl: 1.5rem;
+
+  --shadow-card: 0 1px 2px rgb(10 61 44 / 0.05), 0 1px 3px rgb(10 61 44 / 0.06);
+  --shadow-lift: 0 4px 6px -1px rgb(10 61 44 / 0.07), 0 10px 24px -6px rgb(10 61 44 / 0.10);
+  --shadow-pop: 0 10px 15px -3px rgb(10 61 44 / 0.10), 0 20px 40px -12px rgb(10 61 44 / 0.18);
+
+  --animate-fade-up: fadeUp .45s cubic-bezier(.21,.65,.36,1) both;
+  --animate-fade-in: fadeIn .35s ease both;
   --animate-pulse-soft: pulseSoft 2s ease-in-out infinite;
   --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-pop: pop .35s cubic-bezier(.34,1.56,.64,1) both;
+  --animate-iris: irisSpin 14s linear infinite;
 }
 
-@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes pulseSoft { 0%,100% { opacity:.55 } 50% { opacity:1 } }
+@keyframes pulseSoft { 0%,100% { opacity:.5 } 50% { opacity:1 } }
 @keyframes shimmer { from { background-position: -400px 0 } to { background-position: 400px 0 } }
+@keyframes pop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+@keyframes irisSpin { to { transform: rotate(360deg); } }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   html { scroll-behavior: auto; }
 }
-body { @apply bg-gray-50 text-gray-900 antialiased dark:bg-[#0b1210] dark:text-gray-100; }
 
-.card { @apply rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-white/10 dark:bg-white/[0.04]; }
-.btn, .btn-primary, .btn-secondary, .btn-danger { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-50 disabled:pointer-events-none active:scale-[.98]; }
-.btn-primary { @apply bg-brand-600 text-white hover:bg-brand-700 shadow-lg shadow-brand-600/25; }
-.btn-secondary { @apply border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-white/15 dark:bg-white/5 dark:text-gray-100 dark:hover:bg-white/10; }
+body {
+  @apply bg-ink-50 text-ink-900 antialiased dark:bg-ink-950 dark:text-ink-100;
+  overflow-x: hidden;
+  font-feature-settings: "cv02", "cv03", "cv11";
+}
+
+::selection { background: #17A05E33; }
+
+@layer components {
+/* ---------------- surfaces ---------------- */
+.card {
+  @apply rounded-2xl border border-ink-200/70 bg-white dark:border-white/10 dark:bg-white/[0.04];
+  box-shadow: var(--shadow-card);
+}
+.card-lift { @apply transition-all duration-200; }
+.card-lift:hover { box-shadow: var(--shadow-lift); transform: translateY(-2px); }
+
+/* ---------------- buttons ---------------- */
+.btn, .btn-primary, .btn-secondary, .btn-danger, .btn-gold {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-50 disabled:pointer-events-none active:scale-[.97];
+}
+.btn-primary { @apply bg-brand-600 text-white hover:bg-brand-700; box-shadow: 0 1px 2px rgb(12 125 72 / .35), 0 6px 16px -4px rgb(12 125 72 / .35); }
+.btn-secondary { @apply border border-ink-300 bg-white text-ink-800 hover:border-brand-400 hover:bg-brand-50 dark:border-white/15 dark:bg-white/5 dark:text-ink-100 dark:hover:bg-white/10; }
 .btn-danger { @apply bg-et-red text-white hover:bg-red-700; }
-.input { @apply w-full rounded-xl border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-white/15 dark:bg-white/5 dark:text-gray-100 placeholder:text-gray-400; }
-.label { @apply mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300; }
-.skeleton { @apply rounded-lg bg-gray-200 dark:bg-white/10 animate-pulse; }
-.eth-strip { background: linear-gradient(90deg, #078930 33%, #FCDD09 33% 66%, #DA121A 66%); }
+.btn-gold { @apply bg-gold-400 text-brand-950 hover:bg-gold-300; box-shadow: 0 6px 16px -4px rgb(244 185 66 / .45); }
 
+/* ---------------- forms ---------------- */
+.input {
+  @apply w-full rounded-xl border border-ink-300 bg-white px-3.5 py-2.5 text-sm outline-none transition placeholder:text-ink-400
+  focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15
+  dark:border-white/15 dark:bg-white/5 dark:text-ink-100;
+}
+.label { @apply mb-1.5 block text-sm font-medium text-ink-700 dark:text-ink-300; }
+
+/* ---------------- misc ---------------- */
+.skeleton { @apply rounded-lg bg-ink-200/70 dark:bg-white/10 animate-pulse; }
+.chip { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+.eth-strip { background: linear-gradient(90deg, #078930 33%, #F4B942 33% 66%, #DA121A 66%); }
+.eth-dots {
+  background-image: radial-gradient(rgb(12 125 72 / 0.13) 1.5px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+.hero-grid {
+  background-image:
+    linear-gradient(rgb(23 160 94 / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(23 160 94 / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 0%, black 40%, transparent 100%);
+}
+
+}
+
+/* section label — small gold overline used across pages */
+.overline { @apply text-[11px] font-bold uppercase tracking-[0.18em] text-gold-600 dark:text-gold-400; }
+
+/* Amharic text renders slightly larger x-height; give it room */
+:lang(am), [data-lang="am"] { line-height: 1.65; letter-spacing: 0; }
+
+/* ---------------- leaflet ---------------- */
 .leaflet-container { @apply rounded-2xl z-0; font: inherit; }
 .dark .leaflet-tile { filter: brightness(.7) invert(1) contrast(2.8) hue-rotate(190deg) saturate(.35) brightness(.8); }
-.dark .leaflet-container { background: #0b1210; }
-.marker-dot { display:flex; align-items:center; justify-content:center; border-radius:9999px; color:#fff; font-weight:700; font-size:11px; box-shadow:0 2px 8px rgba(0,0,0,.35); border:2px solid rgba(255,255,255,.9); }
+.dark .leaflet-container { background: #0B1512; }
+.leaflet-popup-content-wrapper { border-radius: 14px !important; box-shadow: var(--shadow-pop) !important; }
+.marker-dot { display:flex; align-items:center; justify-content:center; border-radius:9999px; color:#fff; font-weight:700; font-size:11px; box-shadow:0 2px 8px rgba(10,61,44,.35); border:2px solid rgba(255,255,255,.92); transition: transform .15s ease; }
+.marker-dot:hover { transform: scale(1.18); }
+.marker-cluster-small, .marker-cluster-medium, .marker-cluster-large { background: rgb(23 160 94 / .25) !important; }
+.marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div { background: #0c7d48 !important; color: #fff !important; font-weight: 700; }

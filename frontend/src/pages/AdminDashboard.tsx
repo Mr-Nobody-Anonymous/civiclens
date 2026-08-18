@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Bar, BarChart, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Activity, AlertTriangle, BrainCircuit, CheckCircle2, Clock, FileText, Flag, FolderOpen, RotateCw, Route, ScrollText, Users as UsersIcon, Wrench } from 'lucide-react'
+import { Activity, AlertTriangle, BrainCircuit, TrendingUp, CheckCircle2, Clock, FileText, Flag, FolderOpen, RotateCw, Route, ScrollText, Users as UsersIcon, Wrench } from 'lucide-react'
 import { api } from '../lib/api'
 import type { Report } from '../lib/types'
 import { SEVERITY, STATUS_META } from '../lib/types'
 import { useApp } from '../lib/store'
 import { StatCard, Skeleton } from '../components/ui'
 import ReportRow from '../components/ReportRow'
+import ReviewQueue from '../components/ReviewQueue'
+import ModerationCenter from '../components/ModerationCenter'
+import CityIntelligence from '../components/CityIntelligence'
 
 interface Stats {
   total: number; today: number; week: number; month: number; open: number
@@ -22,7 +25,7 @@ interface Stats {
 
 const PIE_COLORS = ['#0d8a50', '#FCDD09', '#DA121A', '#3b82f6', '#8b5cf6', '#f97316', '#14b8a6', '#ec4899', '#64748b', '#a3e635']
 
-type Tab = 'overview' | 'review' | 'flagged' | 'rules' | 'users' | 'jobs' | 'audit'
+type Tab = 'overview' | 'intelligence' | 'aireview' | 'moderation' | 'review' | 'flagged' | 'rules' | 'users' | 'jobs' | 'audit'
 
 interface AdminUser { id: string; name: string; email: string; role: string; city?: string; is_active: boolean; organization?: string; created_at: string }
 interface AdminJob { id: string; name: string; status: string; attempts: number; max_attempts: number; last_error?: string; payload?: string; created_at: string }
@@ -30,7 +33,9 @@ interface AdminJob { id: string; name: string; status: string; attempts: number;
 export default function AdminDashboard() {
   const { user, authLoaded } = useApp()
   const [stats, setStats] = useState<Stats | null>(null)
-  const [tab, setTab] = useState<Tab>('overview')
+  const [params] = useSearchParams()
+  const initialTab = (params.get('tab') as Tab) || 'overview'
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [reviewList, setReviewList] = useState<Report[] | null>(null)
   const [rules, setRules] = useState<{ id: string; category: string; keywords?: string; city?: string; organization_name: string; priority: number; auto_assign: boolean; is_active: boolean }[]>([])
   const [logs, setLogs] = useState<{ id: string; action: string; detail?: string; entity?: string; created_at: string; ip?: string }[]>([])
@@ -64,7 +69,7 @@ export default function AdminDashboard() {
     return <div className="mx-auto max-w-md px-4 py-20 text-center">
       <AlertTriangle className="mx-auto size-10 text-amber-500" />
       <h1 className="mt-3 text-xl font-bold">Staff access required</h1>
-      <p className="mt-1 text-sm text-gray-500">Sign in with an administrator or moderator account.</p>
+      <p className="mt-1 text-sm text-ink-500">Sign in with an administrator or moderator account.</p>
       <Link to="/login" className="btn-primary mt-5">Sign in</Link>
     </div>
   }
@@ -76,12 +81,12 @@ export default function AdminDashboard() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
       <h1 className="text-2xl font-extrabold md:text-3xl">Admin Dashboard</h1>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Platform overview, triage and AI oversight.</p>
+      <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">Platform overview, triage and AI oversight.</p>
 
       <div className="mt-5 flex flex-wrap gap-2" role="tablist">
-        {([['overview', 'Overview', Activity], ['review', 'Needs Review', FolderOpen], ['flagged', 'Flagged', Flag], ['rules', 'Routing Rules', Route], ['users', 'Users', UsersIcon], ['jobs', 'Jobs', Wrench], ['audit', 'Audit Log', ScrollText]] as [Tab, string, typeof Activity][]).map(([id, label, Icon]) => (
+        {([['overview', 'Overview', Activity], ['intelligence', 'City Intelligence', TrendingUp], ['aireview', 'AI Review', BrainCircuit], ['moderation', 'Moderation', Flag], ['review', 'Needs Review', FolderOpen], ['flagged', 'Flagged', Flag], ['rules', 'Routing Rules', Route], ['users', 'Users', UsersIcon], ['jobs', 'Jobs', Wrench], ['audit', 'Audit Log', ScrollText]] as [Tab, string, typeof Activity][]).map(([id, label, Icon]) => (
           <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-            className={`btn ${tab === id ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 dark:border-white/15 dark:bg-white/5 dark:text-gray-200'}`}>
+            className={`btn ${tab === id ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25' : 'border border-ink-300 bg-white text-ink-700 hover:bg-ink-100 dark:border-white/15 dark:bg-white/5 dark:text-ink-200'}`}>
             <Icon className="size-4" />{label}
           </button>
         ))}
@@ -153,7 +158,7 @@ export default function AdminDashboard() {
                     </ResponsiveContainer>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                    {stats.by_organization.map(o => <span key={o.name} className="rounded-full bg-gray-100 px-2.5 py-1 dark:bg-white/10">{o.name}: <b>{o.count}</b></span>)}
+                    {stats.by_organization.map(o => <span key={o.name} className="rounded-full bg-ink-100 px-2.5 py-1 dark:bg-white/10">{o.name}: <b>{o.count}</b></span>)}
                   </div>
                 </div>
               </div>
@@ -166,7 +171,7 @@ export default function AdminDashboard() {
                       {h.lat.toFixed(2)}, {h.lng.toFixed(2)} · <b>{h.count}</b> reports
                     </span>
                   ))}
-                  {stats.hotspots.length === 0 && <span className="text-gray-400">No location data yet.</span>}
+                  {stats.hotspots.length === 0 && <span className="text-ink-500 dark:text-ink-400">No location data yet.</span>}
                 </div>
               </div>
             </>
@@ -174,10 +179,14 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {tab === 'intelligence' && <CityIntelligence />}
+      {tab === 'aireview' && <ReviewQueue />}
+      {tab === 'moderation' && <ModerationCenter />}
+
       {(tab === 'review' || tab === 'flagged') && (
         <div className="mt-6 space-y-3">
           {reviewList === null && <Skeleton className="h-40" />}
-          {reviewList?.length === 0 && <p className="card p-8 text-center text-sm text-gray-500">Nothing here — all clear! 🎉</p>}
+          {reviewList?.length === 0 && <p className="card p-8 text-center text-sm text-ink-500">Nothing here — all clear! 🎉</p>}
           {reviewList?.map(r => <ReportRow key={r.id} r={r} onChanged={() => {
             api.get(tab === 'review' ? '/api/reports?status=under_review&page_size=50' : '/api/reports/priority')
               .then(d => setReviewList(tab === 'review' ? d.items : (d as Report[]).filter((x: Report) => x.is_flagged)))
@@ -188,16 +197,16 @@ export default function AdminDashboard() {
       {tab === 'rules' && (
         <div className="card mt-6 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wider text-gray-500 dark:border-white/10">
+            <thead><tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wider text-ink-500 dark:border-white/10">
               <th className="px-4 py-3">Category</th><th className="px-4 py-3">Keywords</th><th className="px-4 py-3">City</th>
               <th className="px-4 py-3">Organization</th><th className="px-4 py-3">Priority</th><th className="px-4 py-3">Auto-assign</th>
             </tr></thead>
             <tbody>
               {rules.map(r => (
-                <tr key={r.id} className={`border-b border-gray-100 dark:border-white/5 ${!r.is_active ? 'opacity-40' : ''}`}>
+                <tr key={r.id} className={`border-b border-ink-100 dark:border-white/5 ${!r.is_active ? 'opacity-40' : ''}`}>
                   <td className="px-4 py-3 font-semibold">{r.category}</td>
-                  <td className="max-w-48 truncate px-4 py-3 text-xs text-gray-500">{r.keywords || '—'}</td>
-                  <td className="px-4 py-3">{r.city || <span className="text-gray-400">National</span>}</td>
+                  <td className="max-w-48 truncate px-4 py-3 text-xs text-ink-500">{r.keywords || '—'}</td>
+                  <td className="px-4 py-3">{r.city || <span className="text-ink-500 dark:text-ink-400">National</span>}</td>
                   <td className="px-4 py-3">{r.organization_name}</td>
                   <td className="px-4 py-3">{r.priority}</td>
                   <td className="px-4 py-3">{r.auto_assign ? <span className="font-semibold text-emerald-600">Yes</span> : 'No'}</td>
@@ -205,7 +214,7 @@ export default function AdminDashboard() {
               ))}
             </tbody>
           </table>
-          <p className="px-4 py-3 text-xs text-gray-400">Rules route AI-classified reports to organizations. Manage via API: POST /api/rules (admin only).</p>
+          <p className="px-4 py-3 text-xs text-ink-500 dark:text-ink-400">Rules route AI-classified reports to organizations. Manage via API: POST /api/rules (admin only).</p>
         </div>
       )}
 
@@ -213,13 +222,13 @@ export default function AdminDashboard() {
         <div className="card mt-6 overflow-x-auto">
           {users === null ? <Skeleton className="m-4 h-40" /> : (
             <table className="w-full text-sm">
-              <thead><tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wider text-gray-500 dark:border-white/10">
+              <thead><tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wider text-ink-500 dark:border-white/10">
                 <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th>
                 <th className="px-4 py-3">Organization</th><th className="px-4 py-3">Active</th><th className="px-4 py-3">Actions</th>
               </tr></thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.id} className={`border-b border-gray-100 dark:border-white/5 ${!u.is_active ? 'opacity-40' : ''}`}>
+                  <tr key={u.id} className={`border-b border-ink-100 dark:border-white/5 ${!u.is_active ? 'opacity-40' : ''}`}>
                     <td className="px-4 py-2.5 font-semibold">{u.name}</td>
                     <td className="px-4 py-2.5 text-xs">{u.email}</td>
                     <td className="px-4 py-2.5">
@@ -260,27 +269,27 @@ export default function AdminDashboard() {
       {tab === 'jobs' && (
         <div className="card mt-6 overflow-x-auto">
           {jobs === null ? <Skeleton className="m-4 h-40" /> : jobs.length === 0 ? (
-            <p className="p-8 text-center text-sm text-gray-500">No background jobs yet.</p>
+            <p className="p-8 text-center text-sm text-ink-500">No background jobs yet.</p>
           ) : (
             <table className="w-full text-sm">
-              <thead><tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wider text-gray-500 dark:border-white/10">
+              <thead><tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wider text-ink-500 dark:border-white/10">
                 <th className="px-4 py-3">Job</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Attempts</th>
                 <th className="px-4 py-3">Error</th><th className="px-4 py-3">Created</th><th className="px-4 py-3"></th>
               </tr></thead>
               <tbody>
                 {jobs.map(j => (
-                  <tr key={j.id} className="border-b border-gray-100 dark:border-white/5">
+                  <tr key={j.id} className="border-b border-ink-100 dark:border-white/5">
                     <td className="px-4 py-2.5 font-mono text-xs">{j.name}</td>
                     <td className="px-4 py-2.5">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                         j.status === 'done' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' :
                         j.status === 'dead' ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300' :
                         j.status === 'failed' ? 'bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300' :
-                        'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300'}`}>{j.status}</span>
+                        'bg-ink-100 text-ink-600 dark:bg-white/10 dark:text-ink-300'}`}>{j.status}</span>
                     </td>
                     <td className="px-4 py-2.5 text-xs">{j.attempts}/{j.max_attempts}</td>
-                    <td className="max-w-64 truncate px-4 py-2.5 text-xs text-gray-500">{j.last_error ?? '—'}</td>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-xs text-gray-400">{new Date(j.created_at).toLocaleString()}</td>
+                    <td className="max-w-64 truncate px-4 py-2.5 text-xs text-ink-500">{j.last_error ?? '—'}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-xs text-ink-500 dark:text-ink-400">{new Date(j.created_at).toLocaleString()}</td>
                     <td className="px-4 py-2.5">
                       {['failed', 'dead'].includes(j.status) && (
                         <button className="btn-secondary !py-1 !text-xs" onClick={async () => {
@@ -303,17 +312,17 @@ export default function AdminDashboard() {
       {tab === 'audit' && (
         <div className="card mt-6 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wider text-gray-500 dark:border-white/10">
+            <thead><tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wider text-ink-500 dark:border-white/10">
               <th className="px-4 py-3">Time</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Entity</th><th className="px-4 py-3">Detail</th><th className="px-4 py-3">IP</th>
             </tr></thead>
             <tbody>
               {logs.map(l => (
-                <tr key={l.id} className="border-b border-gray-100 dark:border-white/5">
-                  <td className="whitespace-nowrap px-4 py-2.5 text-xs text-gray-500">{new Date(l.created_at).toLocaleString()}</td>
+                <tr key={l.id} className="border-b border-ink-100 dark:border-white/5">
+                  <td className="whitespace-nowrap px-4 py-2.5 text-xs text-ink-500">{new Date(l.created_at).toLocaleString()}</td>
                   <td className="px-4 py-2.5 font-mono text-xs font-semibold">{l.action}</td>
                   <td className="px-4 py-2.5 text-xs">{l.entity}</td>
-                  <td className="max-w-56 truncate px-4 py-2.5 text-xs text-gray-500">{l.detail}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{l.ip}</td>
+                  <td className="max-w-56 truncate px-4 py-2.5 text-xs text-ink-500">{l.detail}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-ink-500 dark:text-ink-400">{l.ip}</td>
                 </tr>
               ))}
             </tbody>

@@ -1,6 +1,5 @@
-import math
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
@@ -15,7 +14,7 @@ from ..db import get_db
 from .. import media as mediaproc
 from ..jobs import enqueue
 from ..models import (OPEN_STATUSES, CATEGORIES, OrganizationUser, Report,
-                      ReportAIAnalysis, ReportComment, ReportMedia,
+                      ReportComment, ReportMedia,
                       ReportStatus, ReportStatusHistory, ReportAssignment,
                       Role, User)
 from ..notify import notify
@@ -54,35 +53,7 @@ def _sniff_ok(head: bytes, ctype: str) -> bool:
     return any(head.startswith(s) for s in sigs)
 
 
-def _haversine_m(lat1, lng1, lat2, lng2):
-    R = 6371000
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
-
-
-def _find_possible_duplicate(db: DBSession, rpt: Report) -> Optional[Report]:
-    if rpt.latitude is None or rpt.longitude is None:
-        return None
-    window = datetime.now(timezone.utc) - timedelta(days=settings.duplicate_window_days)
-    near = (db.query(Report)
-              .filter(Report.id != rpt.id,
-                      Report.created_at >= window,
-                      Report.status.in_(OPEN_STATUSES),
-                      Report.latitude.between(rpt.latitude - 0.01, rpt.latitude + 0.01),
-                      Report.longitude.between(rpt.longitude - 0.01, rpt.longitude + 0.01))
-              .limit(200).all())
-    words = set(w for w in (rpt.title + " " + rpt.description).lower().split() if len(w) > 3)
-    for other in near:
-        if _haversine_m(rpt.latitude, rpt.longitude, other.latitude, other.longitude) > settings.duplicate_radius_m:
-            continue
-        ow = set(w for w in (other.title + " " + other.description).lower().split() if len(w) > 3)
-        if words and ow and len(words & ow) / max(1, len(words | ow)) > 0.25:
-            return other
-        if rpt.user_category and rpt.user_category == (other.user_category or other.category):
-            return other
-    return None
+from ..duplicates import best_duplicate as _find_possible_duplicate, find_duplicates
 
 
 # --------------------------------------------------------------------------
@@ -104,11 +75,20 @@ def create_report(body: ReportCreate, request: Request,
     if body.category and body.category not in CATEGORIES:
         raise HTTPException(400, "Unknown category")
 
+    # offline idempotency: a retried queued submission returns the original report
+    if body.client_key:
+        existing = db.query(Report).filter(Report.client_key == body.client_key).first()
+        if existing:
+            out = report_public(existing)
+            out["deduplicated"] = True
+            return out
+
     rpt = Report(
         reporter_id=user.id if user else None,
         title=body.title.strip(), description=body.description.strip(),
         comments=body.comments, user_category=body.category, category=body.category,
         city=body.city or settings.cities.split(",")[0],
+        client_key=body.client_key,
         latitude=body.latitude, longitude=body.longitude, address=body.address,
         status=ReportStatus.submitted,
     )
@@ -215,6 +195,13 @@ def upload_media(report_id: str, request: Request,
                     original_name=(file.filename or "")[:255],
                     uploaded_by=user.id if user else None)
 
+    # evidence integrity chain: SHA-256 of the stored file
+    try:
+        from ..integrity import file_sha256
+        m.sha256 = file_sha256(storage.path(key))
+    except Exception:
+        pass
+
     # metadata + thumbnail via ffmpeg
     try:
         local = storage.path(key)
@@ -239,10 +226,47 @@ def upload_media(report_id: str, request: Request,
     except Exception:
         pass
 
+    # multi-frame perceptual signatures (video_embedding duplicate analyzer):
+    # phash of N frames sampled across the video — catches re-recordings of
+    # the same scene that a single poster-frame hash would miss
+    try:
+        if ctype in VIDEO_TYPES:
+            import json as _json
+            from ..integrity import image_phash
+            frames = mediaproc.extract_frames(storage.path(key), n=4)
+            sigs = [h for h in (image_phash(f) for f in frames) if h]
+            for f in frames:
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+            if sigs:
+                m.frame_sigs = _json.dumps(sigs)
+    except Exception:
+        pass
+
+    # perceptual hash of the visual (thumbnail frame) for near-duplicate detection
+    try:
+        from ..integrity import image_phash
+        if m.thumb_key:
+            m.phash = image_phash(storage.path(m.thumb_key))
+        elif media_kind == "image":
+            m.phash = image_phash(storage.path(key))
+    except Exception:
+        pass
+
     db.add(m)
     db.commit()
     audit(db, user.id if user else None, "media.upload", "report_media", m.id,
           detail=f"{media_kind} {size}b", ip=client_ip(request))
+
+    if media_kind == "resolution":
+        try:
+            from ..resolution import run_resolution_check
+            db.refresh(rpt)   # pick up the just-committed media row
+            run_resolution_check(db, rpt)
+        except Exception:
+            pass  # advisory only — never blocks the upload
 
     if finalize:
         enqueue("process_report", report_id=rpt.id)
@@ -377,10 +401,26 @@ def get_report(report_id: str, db: DBSession = Depends(get_db),
                   .order_by(ReportComment.created_at.asc()).all())
     data["comments"] = [
         {"id": c.id, "body": c.body, "internal": c.internal,
-         "author": (c.user.name if c.user else "Anonymous"), "created_at": c.created_at}
-        for c in comments if privileged or not c.internal
+         "author": (c.user.name if c.user else "Anonymous"), "created_at": c.created_at,
+         "hidden": c.hidden}
+        for c in comments
+        if (privileged or not c.internal) and (privileged or not c.hidden)
     ]
     return data
+
+
+@router.get("/{report_id}/duplicates")
+def duplicate_candidates(report_id: str, db: DBSession = Depends(get_db),
+                         user: User = Depends(require_triage)):
+    """Staff view: probable duplicates with per-analyzer scores/reasons.
+    Candidates are surfaced for HUMAN confirmation — nothing is auto-merged."""
+    rpt = db.get(Report, report_id)
+    if not rpt:
+        raise HTTPException(404, "Report not found")
+    return [{"report_id": c.report.id, "public_code": c.report.public_code,
+             "title": c.report.title, "status": c.report.status.value,
+             "score": c.score, "analyzer": c.analyzer, "reason": c.reason}
+            for c in find_duplicates(db, rpt)]
 
 
 @router.get("/{report_id}/analysis")
@@ -501,7 +541,25 @@ def patch_status(report_id: str, body: StatusPatch, request: Request,
         raise HTTPException(400, "Unknown status")
     if new_status == ReportStatus.rejected and not (body.note or "").strip():
         raise HTTPException(422, "A reason note is required when rejecting a report")
+    # validate the state transition FIRST (409 beats the evidence gate's 422)
+    from ..state_machine import can_transition
+    if rpt.status != new_status and not can_transition(rpt.status, new_status):
+        raise HTTPException(409, f"Invalid status transition: {rpt.status.value} → {new_status.value}")
+    if new_status == ReportStatus.resolved:
+        from ..resolution import evidence_required, has_resolution_evidence
+        if evidence_required(rpt) and not has_resolution_evidence(rpt):
+            if user.role in (Role.admin, Role.moderator) and (body.note or "").strip():
+                audit(db, user.id, "report.resolve_no_evidence_override", "report", rpt.id,
+                      detail=body.note)
+            else:
+                raise HTTPException(422,
+                    f"'{rpt.category}' reports require resolution evidence (photo/video of the "
+                    "fix) before they can be marked resolved. Upload evidence first, or an "
+                    "admin/moderator can override with a written reason.")
 
+    if rpt.acknowledged_at is None and user.role in (Role.org_staff, Role.admin, Role.moderator):
+        rpt.acknowledged_at = datetime.now(timezone.utc)
+        db.commit()
     transition(db, rpt, new_status, actor=user, note=body.note or "")
     audit(db, user.id, "report.status", "report", rpt.id,
           detail=f"-> {new_status.value} ({body.note or ''})", ip=client_ip(request))
@@ -526,6 +584,32 @@ def reopen_report(report_id: str, request: Request, reason: str = "",
     return {"ok": True, "status": rpt.status.value}
 
 
+@router.post("/{report_id}/confirm-resolution")
+def confirm_resolution(report_id: str, request: Request, confirmed: bool = True,
+                       user: User = Depends(require_user), db: DBSession = Depends(get_db)):
+    """Reporter verdict on a resolved report: confirmed=True closes the loop;
+    confirmed=False ("still a problem") reopens via the state machine."""
+    rpt = db.get(Report, report_id)
+    if not rpt:
+        raise HTTPException(404, "Report not found")
+    if not rpt.reporter_id or user.id != rpt.reporter_id:
+        raise HTTPException(403, "Only the original reporter can confirm resolution")
+    if rpt.status != ReportStatus.resolved:
+        raise HTTPException(409, "Report is not in resolved state")
+    rpt.resolution_confirmed = confirmed
+    db.commit()
+    if not confirmed:
+        transition(db, rpt, ReportStatus.reopened, actor=user,
+                   note="Reporter says the issue is still a problem")
+    audit(db, user.id, "report.resolution_" + ("confirmed" if confirmed else "disputed"),
+          "report", rpt.id, ip=client_ip(request))
+    # update the cluster status if the member set changed
+    if rpt.cluster_id:
+        from ..clustering import refresh_cluster
+        refresh_cluster(db, rpt.cluster_id)
+    return {"ok": True, "status": rpt.status.value, "resolution_confirmed": confirmed}
+
+
 @router.post("/{report_id}/retry-analysis")
 def retry_analysis_endpoint(report_id: str, user: User = Depends(require_staff),
                             db: DBSession = Depends(get_db)):
@@ -548,6 +632,10 @@ def patch_assignment(report_id: str, body: AssignmentPatch, request: Request,
     if body.accept is not None:  # org accepting/declining its assignment
         if not _can_manage(db, user, rpt):
             raise HTTPException(403, "Not allowed")
+        if body.accept and rpt.acknowledged_at is None:
+            from datetime import datetime as _dt, timezone as _tz
+            rpt.acknowledged_at = _dt.now(_tz.utc)
+            db.commit()
         a = (db.query(ReportAssignment).filter(ReportAssignment.report_id == rpt.id)
                .order_by(ReportAssignment.created_at.desc()).first())
         if a:

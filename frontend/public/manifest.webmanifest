@@ -1,0 +1,17 @@
+{
+  "name": "CivicLens Ethiopia",
+  "short_name": "CivicLens",
+  "description": "Report civic issues with evidence. Local AI routes them to the responsible organization.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F6F8F7",
+  "theme_color": "#0c7d48",
+  "lang": "en",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Report an Issue", "url": "/report" },
+    { "name": "My Reports", "url": "/reports?mine=1" }
+  ]
+}

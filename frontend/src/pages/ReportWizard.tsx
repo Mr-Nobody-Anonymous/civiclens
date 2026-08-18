@@ -2,12 +2,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Camera, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, FileVideo, Loader2, LocateFixed, MapPin, Sparkles, Square, Trash2, Upload, Video } from 'lucide-react'
-import { api, reverseGeocode, uploadWithProgress, ApiError } from '../lib/api'
+import { api, apiUrl, getCsrfToken, reverseGeocode, uploadWithProgress, ApiError } from '../lib/api'
 import { useApp } from '../lib/store'
 import { useI18n } from '../lib/i18n'
 import IssueMap from '../components/IssueMap'
 import { CATEGORY_ICONS, type Report } from '../lib/types'
 import { SeverityBadge, StatusBadge } from '../components/ui'
+import { LogoMark } from '../components/Logo'
+import { enqueueReport, getQueue, installOfflineSync } from '../lib/offline'
 
 type Evidence = { file: File; kind: 'video' | 'image'; preview: string }
 
@@ -21,6 +23,7 @@ export default function ReportWizard() {
   // step 1
   const [evidence, setEvidence] = useState<Evidence[]>([])
   const [recording, setRecording] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const videoPreviewRef = useRef<HTMLVideoElement>(null)
@@ -31,6 +34,11 @@ export default function ReportWizard() {
   const [address, setAddress] = useState('')
   const [city, setCity] = useState('')
   const [locating, setLocating] = useState(false)
+
+  // voice reporting
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
+  const voiceRef = useRef<MediaRecorder | null>(null)
+  const voiceChunks = useRef<Blob[]>([])
 
   // step 3
   const [title, setTitle] = useState('')
@@ -44,12 +52,24 @@ export default function ReportWizard() {
   const createdRef = useRef<Report | null>(null)      // created report survives upload retries
   const uploadedRef = useRef<Set<number>>(new Set())  // successfully uploaded evidence indexes
   const [submitting, setSubmitting] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
+  const [queuedOffline, setQueuedOffline] = useState<string | null>(null)
+  const [queueLen, setQueueLen] = useState(getQueue().length)
   const [progress, setProgress] = useState<Record<number, number>>({})
   const [done, setDone] = useState<Report | null>(null)
   const [analysis, setAnalysis] = useState<Report['ai']>(null)
   const [doneStatus, setDoneStatus] = useState('submitted')
 
   useEffect(() => { if (meta && !city) setCity(meta.cities[0]) }, [meta]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const up = () => setOnline(true), down = () => setOnline(false)
+    window.addEventListener('online', up); window.addEventListener('offline', down)
+    const onQ = (e: Event) => setQueueLen((e as CustomEvent).detail as number)
+    window.addEventListener('cl-offline-queue', onQ)
+    const cleanup = installOfflineSync(code => toast('success', `Queued report ${code} uploaded ✓`))
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); window.removeEventListener('cl-offline-queue', onQ); cleanup() }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Don't lose an in-flight submission if the user accidentally navigates away.
   useEffect(() => {
@@ -137,13 +157,21 @@ export default function ReportWizard() {
 
   async function submit() {
     setSubmitting(true)
+    const body: Record<string, unknown> = {
+      title: title.trim(), description: desc.trim(), comments: comments || undefined,
+      category: category || undefined, city, latitude: pos?.[0], longitude: pos?.[1],
+      address: address || undefined,
+    }
+    if (!user) { body.captcha_a = captcha.a; body.captcha_b = captcha.b; body.captcha_answer = parseInt(captchaAns || '0', 10) }
     try {
-      const body: Record<string, unknown> = {
-        title: title.trim(), description: desc.trim(), comments: comments || undefined,
-        category: category || undefined, city, latitude: pos?.[0], longitude: pos?.[1],
-        address: address || undefined,
+      // OFFLINE: queue locally with an idempotency key; sync when back online
+      if (!navigator.onLine) {
+        await enqueueReport(body, evidence.map(e => e.file))
+        setQueuedOffline('queued')
+        setSubmitting(false)
+        toast('info', 'You are offline — report saved on your device and will upload automatically.')
+        return
       }
-      if (!user) { body.captcha_a = captcha.a; body.captcha_b = captcha.b; body.captcha_answer = parseInt(captchaAns || '0', 10) }
       // create the report first — from here on it exists server-side and is never lost
       const rpt: Report = createdRef.current ?? await api.post('/api/reports', body)
       createdRef.current = rpt
@@ -170,10 +198,47 @@ export default function ReportWizard() {
       toast('success', `Report ${rpt.public_code} submitted!`)
       if (rpt.possible_duplicate) toast('info', `Note: this looks similar to existing report ${rpt.duplicate_of_code}. A reviewer may link them — nothing is deleted.`)
     } catch (e) {
-      toast('error', e instanceof ApiError ? e.message : 'Submission failed — please try again')
+      const err = e as ApiError
+      if (err.status === 0 && !createdRef.current) {
+        // network dropped before the report existed server-side -> queue offline
+        await enqueueReport(body, evidence.map(ev => ev.file))
+        setQueuedOffline('queued')
+        toast('info', 'Connection lost — report saved on your device and will upload automatically.')
+      } else {
+        toast('error', e instanceof ApiError ? e.message : 'Submission failed — please try again')
+      }
     } finally {
       setSubmitting(false)
     }
+  }
+
+  /* ---------------- offline-queued confirmation ---------------- */
+  if (queuedOffline) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-10">
+        <div className="card overflow-hidden animate-fade-up">
+          <div className="eth-strip h-1" />
+          <div className="p-7 text-center">
+            <div className="mx-auto grid size-16 place-items-center rounded-full bg-amber-100 dark:bg-amber-500/15">
+              <span className="text-3xl" aria-hidden>📡</span>
+            </div>
+            <h1 className="mt-4 text-2xl font-extrabold">Report saved on your device</h1>
+            <p className="mt-2 text-sm text-ink-600 dark:text-ink-300">
+              You're offline right now. Your report {evidence.length > 0 ? 'and evidence are' : 'is'} stored
+              locally and will upload automatically when your connection returns — you don't need to do anything.
+            </p>
+            <p className="mt-4 inline-flex items-center gap-2 rounded-xl bg-ink-100 px-4 py-2 text-sm font-semibold dark:bg-white/10">
+              <span className={`size-2 rounded-full ${online ? 'bg-brand-500' : 'bg-amber-500 animate-pulse'}`} />
+              {online ? 'Back online — uploading…' : 'Waiting for connection'} · {queueLen} queued
+            </p>
+            <div className="mt-6 flex justify-center gap-3">
+              <Link to="/reports" className="btn-secondary">{t('explore')}</Link>
+              <button className="btn-primary" onClick={() => { setQueuedOffline(null); setStep(0); setEvidence([]); setTitle(''); setDesc('') }}>Report another issue</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   /* ---------------- confirmation screen ---------------- */
@@ -187,40 +252,53 @@ export default function ReportWizard() {
               <CheckCircle2 className="size-9 text-emerald-600 dark:text-emerald-400" />
             </div>
             <h1 className="mt-4 text-2xl font-extrabold">Report submitted!</h1>
-            <p className="mt-1 text-gray-500 dark:text-gray-400">Keep this ID to track your report.</p>
-            <p className="mt-4 inline-block rounded-xl bg-gray-100 px-5 py-2.5 font-mono text-xl font-bold tracking-wider dark:bg-white/10">{done.public_code}</p>
+            <p className="mt-1 text-ink-500 dark:text-ink-400">Keep this ID to track your report.</p>
+            <p className="mt-4 inline-block rounded-xl bg-ink-100 px-5 py-2.5 font-mono text-xl font-bold tracking-wider dark:bg-white/10">{done.public_code}</p>
 
             <div className="mt-6 grid gap-3 text-left sm:grid-cols-2">
-              <div className="card p-4"><p className="text-xs text-gray-500">Status</p><div className="mt-1.5"><StatusBadge status={analysis ? doneStatus : 'ai_analysis'} size="lg" /></div></div>
-              <div className="card p-4"><p className="text-xs text-gray-500">Location</p><p className="mt-1.5 flex items-center gap-1.5 text-sm font-medium"><MapPin className="size-4 text-brand-600" />{address ? address.split(',').slice(0, 2).join(',') : `${pos?.[0].toFixed(4)}, ${pos?.[1].toFixed(4)}`}</p></div>
-              <div className="card p-4 sm:col-span-2"><p className="text-xs text-gray-500">Evidence</p>
+              <div className="card p-4"><p className="text-xs text-ink-500">Status</p><div className="mt-1.5"><StatusBadge status={analysis ? doneStatus : 'ai_analysis'} size="lg" /></div></div>
+              <div className="card p-4"><p className="text-xs text-ink-500">Location</p><p className="mt-1.5 flex items-center gap-1.5 text-sm font-medium"><MapPin className="size-4 text-brand-600" />{address ? address.split(',').slice(0, 2).join(',') : `${pos?.[0].toFixed(4)}, ${pos?.[1].toFixed(4)}`}</p></div>
+              <div className="card p-4 sm:col-span-2"><p className="text-xs text-ink-500">Evidence</p>
                 <p className="mt-1.5 text-sm font-medium">{evidence.length === 0 ? 'No media attached' : `${evidence.filter(e => e.kind === 'video').length} video(s), ${evidence.filter(e => e.kind === 'image').length} photo(s) uploaded securely`}</p></div>
             </div>
 
             {/* AI progress / result */}
             <div className="card mt-4 p-5 text-left">
               {!analysis ? (
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <Sparkles className="size-8 text-violet-500 animate-pulse-soft" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-semibold">AI analysis in progress…</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Extracting video frames and classifying the issue with the local model.</p>
-                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-white/10">
-                      <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-brand-500 via-et-yellow to-brand-500 animate-shimmer" style={{ backgroundSize: '400px 100%', width: '100%' }} />
-                    </div>
+                <div>
+                  <p className="flex items-center gap-2.5 font-semibold">
+                    <LogoMark size={26} spin />
+                    Analyzing evidence…
+                  </p>
+                  <ol className="mt-4 space-y-2.5 text-sm" aria-live="polite">
+                    {[
+                      ['Upload received', true],
+                      [evidence.some(e => e.kind === 'video') ? 'Video processed' : 'Evidence processed', true],
+                      ['Frames analyzed by local AI', false],
+                      ['Classification & severity', false],
+                      ['Routing recommendation', false],
+                    ].map(([label, done], i) => (
+                      <li key={i} className="flex items-center gap-2.5">
+                        {done
+                          ? <span className="grid size-5 place-items-center rounded-full bg-brand-500 text-[10px] font-bold text-white">✓</span>
+                          : <span className="size-5 rounded-full border-2 border-brand-300 border-t-brand-600 animate-spin" style={{ animationDuration: '1.2s' }} />}
+                        <span className={done ? '' : 'text-ink-500 dark:text-ink-400'}>{label as string}</span>
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-ink-200 dark:bg-white/10">
+                    <div className="h-full w-full rounded-full bg-gradient-to-r from-brand-500 via-gold-400 to-brand-500 animate-shimmer" style={{ backgroundSize: '400px 100%' }} />
                   </div>
                 </div>
               ) : (
                 <div className="animate-fade-up">
                   <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-violet-600 dark:text-violet-300"><Sparkles className="size-4" />{t('ai_classification')}</p>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                    <div><p className="text-xs text-gray-500">Category</p><p className="font-semibold">{CATEGORY_ICONS[analysis.category ?? 'Other']} {analysis.category}</p></div>
-                    <div><p className="text-xs text-gray-500">Issue</p><p className="font-semibold">{analysis.issue_type}</p></div>
-                    <div><p className="text-xs text-gray-500">{t('severity')}</p><SeverityBadge sev={analysis.severity} /></div>
-                    <div><p className="text-xs text-gray-500">{t('confidence')}</p><p className="font-semibold">{Math.round((analysis.confidence ?? 0) * 100)}%</p></div>
-                    {analysis.responsible_organization && <div className="col-span-2"><p className="text-xs text-gray-500">Recommended organization</p><p className="font-semibold">{analysis.responsible_organization}</p></div>}
+                    <div><p className="text-xs text-ink-500">Category</p><p className="font-semibold">{CATEGORY_ICONS[analysis.category ?? 'Other']} {analysis.category}</p></div>
+                    <div><p className="text-xs text-ink-500">Issue</p><p className="font-semibold">{analysis.issue_type}</p></div>
+                    <div><p className="text-xs text-ink-500">{t('severity')}</p><SeverityBadge sev={analysis.severity} /></div>
+                    <div><p className="text-xs text-ink-500">{t('confidence')}</p><p className="font-semibold">{Math.round((analysis.confidence ?? 0) * 100)}%</p></div>
+                    {analysis.responsible_organization && <div className="col-span-2"><p className="text-xs text-ink-500">Recommended organization</p><p className="font-semibold">{analysis.responsible_organization}</p></div>}
                   </div>
                   <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-400/10 dark:text-amber-300">{t('ai_disclaimer')}</p>
                 </div>
@@ -240,15 +318,24 @@ export default function ReportWizard() {
   /* ---------------- wizard ---------------- */
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
-      <h1 className="text-2xl font-extrabold md:text-3xl">{t('report_issue')}</h1>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">You don't need to know which office is responsible — our AI figures that out.</p>
+      <h1 className="flex items-center gap-3 text-2xl font-extrabold md:text-3xl">{t('report_issue')}
+        {!online && <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">📡 Offline — reports will be queued</span>}
+        {online && queueLen > 0 && <span className="chip bg-brand-50 text-brand-700 dark:bg-brand-400/10 dark:text-brand-300">📤 {queueLen} queued uploading…</span>}
+      </h1>
+      <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">You don't need to know which office is responsible — our AI figures that out.</p>
 
       {/* stepper */}
-      <ol className="mt-6 flex items-center gap-1.5" aria-label="Progress">
+      <ol className="mt-7 flex items-start" aria-label="Progress">
         {STEPS.map((s, i) => (
-          <li key={s} className="flex flex-1 flex-col items-center gap-1.5">
-            <div className={`h-1.5 w-full rounded-full transition-colors ${i <= step ? 'bg-brand-600' : 'bg-gray-200 dark:bg-white/10'}`} />
-            <span className={`text-[11px] font-semibold ${i === step ? 'text-brand-700 dark:text-brand-300' : 'text-gray-400'}`}>{t(s === 'evidence' ? 'evidence' : s === 'location' ? 'location' : s === 'describe' ? 'describe' : 'review')}</span>
+          <li key={s} className="relative flex flex-1 flex-col items-center gap-2">
+            {i > 0 && <span className={`absolute right-1/2 top-[15px] -z-10 h-0.5 w-full transition-colors duration-300 ${i <= step ? 'bg-brand-500' : 'bg-ink-200 dark:bg-white/10'}`} aria-hidden />}
+            <span className={`grid size-8 place-items-center rounded-full border-2 text-xs font-bold transition-all duration-300 ${
+              i < step ? 'border-brand-500 bg-brand-500 text-white'
+              : i === step ? 'border-brand-500 bg-white text-brand-700 shadow-[0_0_0_4px_rgb(23_160_94/0.15)] dark:bg-ink-900 dark:text-brand-300'
+              : 'border-ink-300 bg-white text-ink-400 dark:border-white/15 dark:bg-ink-900'}`}>
+              {i < step ? '✓' : i + 1}
+            </span>
+            <span className={`text-[11px] font-semibold ${i === step ? 'text-brand-700 dark:text-brand-300' : 'text-ink-500 dark:text-ink-400'}`}>{t(s === 'evidence' ? 'evidence' : s === 'location' ? 'location' : s === 'describe' ? 'describe' : 'review')}</span>
           </li>
         ))}
       </ol>
@@ -258,7 +345,7 @@ export default function ReportWizard() {
           <div className="space-y-5">
             <div className="flex items-center gap-3"><Video className="size-6 text-brand-600" /><div>
               <h2 className="font-bold">Capture evidence</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">A short video helps organizations understand the problem fast. Photos work too.</p>
+              <p className="text-sm text-ink-500 dark:text-ink-400">A short video helps organizations understand the problem fast. Photos work too.</p>
             </div></div>
 
             {recording && (
@@ -270,6 +357,18 @@ export default function ReportWizard() {
                 </div>
               </div>
             )}
+
+            {/* drag & drop zone */}
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={e => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files) }}
+              className={`flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-6 py-8 text-center transition-all duration-200 ${
+                dragOver ? 'border-brand-500 bg-brand-50 scale-[1.01] dark:bg-brand-400/10' : 'border-ink-300 dark:border-white/15'}`}>
+              <Upload className={`size-7 transition-colors ${dragOver ? 'text-brand-600' : 'text-ink-400'}`} />
+              <p className="text-sm font-semibold">{dragOver ? 'Drop to attach' : 'Drag & drop video or photos here'}</p>
+              <p className="text-xs text-ink-500 dark:text-ink-400">or use the buttons below</p>
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
               <button onClick={recording ? stopRecording : startRecording} className="btn-secondary flex-col !items-center gap-2 !rounded-2xl !py-5">
@@ -284,12 +383,12 @@ export default function ReportWizard() {
                 <input type="file" accept="image/jpeg,image/png,image/webp" multiple className="sr-only" onChange={e => e.target.files && addFiles(e.target.files)} />
               </label>
             </div>
-            <p className="text-xs text-gray-400">Video up to {maxVideo} MB (MP4/WebM/MOV) · Photos up to {maxImage} MB (JPG/PNG/WebP)</p>
+            <p className="text-xs text-ink-500 dark:text-ink-400">Video up to {maxVideo} MB (MP4/WebM/MOV) · Photos up to {maxImage} MB (JPG/PNG/WebP)</p>
 
             {evidence.length > 0 && (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {evidence.map((ev, i) => (
-                  <div key={i} className="group relative overflow-hidden rounded-xl border border-gray-200 dark:border-white/10">
+                  <div key={i} className="group relative overflow-hidden rounded-xl border border-ink-200 dark:border-white/10">
                     {ev.kind === 'video'
                       ? <video src={ev.preview} className="h-28 w-full object-cover" muted />
                       : <img src={ev.preview} alt="" className="h-28 w-full object-cover" />}
@@ -308,13 +407,13 @@ export default function ReportWizard() {
           <div className="space-y-4">
             <div className="flex items-center gap-3"><MapPin className="size-6 text-brand-600" /><div>
               <h2 className="font-bold">Where is the problem?</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">We only use your location to place this report on the map — with your permission.</p>
+              <p className="text-sm text-ink-500 dark:text-ink-400">We only use your location to place this report on the map — with your permission.</p>
             </div></div>
             <div className="flex flex-wrap items-center gap-3">
               <button onClick={useMyLocation} className="btn-primary" disabled={locating}>
                 {locating ? <Loader2 className="size-4 animate-spin" /> : <LocateFixed className="size-4" />}{t('use_my_location')}
               </button>
-              <span className="text-sm text-gray-500 dark:text-gray-400">{t('tap_map')}</span>
+              <span className="text-sm text-ink-500 dark:text-ink-400">{t('tap_map')}</span>
             </div>
             <IssueMap onPick={pick} picked={pos} className="h-72 md:h-80"
               center={meta ? [meta.default_center.lat, meta.default_center.lng] : undefined} />
@@ -330,12 +429,63 @@ export default function ReportWizard() {
                 <input id="addr" className="input" value={address} onChange={e => setAddress(e.target.value)} placeholder="e.g. Bole Road, near Edna Mall" />
               </div>
             </div>
-            {pos && <p className="text-xs font-mono text-gray-400">📍 {pos[0].toFixed(5)}, {pos[1].toFixed(5)}</p>}
+            {pos && <p className="text-xs font-mono text-ink-500 dark:text-ink-400">📍 {pos[0].toFixed(5)}, {pos[1].toFixed(5)}</p>}
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-4">
+            {/* Voice reporting: speak naturally in Amharic or English */}
+            <div className="rounded-2xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-400/20 dark:bg-brand-400/5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-bold">🎙️ {`Report by voice`}</p>
+                  <p className="text-xs text-ink-500 dark:text-ink-400">Speak naturally in አማርኛ or English — AI drafts the report, you review it.</p>
+                </div>
+                {voiceState === 'idle' && (
+                  <button type="button" className="btn-primary !py-2 !text-sm" onClick={async () => {
+                    try {
+                      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                      const rec = new MediaRecorder(stream)
+                      voiceChunks.current = []
+                      rec.ondataavailable = e => voiceChunks.current.push(e.data)
+                      rec.onstop = async () => {
+                        stream.getTracks().forEach(tr => tr.stop())
+                        setVoiceState('transcribing')
+                        try {
+                          const blob = new Blob(voiceChunks.current, { type: rec.mimeType })
+                          const resp = await fetch(apiUrl('/api/voice/transcribe'), {
+                            method: 'POST', credentials: 'include', body: blob,
+                            headers: { 'X-CSRF-Token': await getCsrfToken() },
+                          })
+                          if (!resp.ok) throw new Error((await resp.json()).detail || 'Transcription failed')
+                          const data = await resp.json()
+                          setDesc(d => d ? d + ' ' + data.text : data.text)
+                          if (!title) setTitle(data.text.split(/[።.!]/)[0].slice(0, 80))
+                          if (data.draft?.category && !category) setCategory(data.draft.category)
+                          toast('success', `Transcribed (${data.language === 'am' ? 'አማርኛ' : 'English'}) — please review and correct before submitting`)
+                        } catch (err) { toast('error', (err as Error).message) }
+                        finally { setVoiceState('idle') }
+                      }
+                      rec.start()
+                      voiceRef.current = rec
+                      setVoiceState('recording')
+                    } catch { toast('error', 'Microphone access denied — you can type instead.') }
+                  }}>🎙️ Start speaking</button>
+                )}
+                {voiceState === 'recording' && (
+                  <button type="button" className="btn-danger !py-2 !text-sm" onClick={() => voiceRef.current?.stop()}>
+                    <span className="size-2 animate-pulse rounded-full bg-white" />Stop & transcribe
+                  </button>
+                )}
+                {voiceState === 'transcribing' && (
+                  <span className="flex items-center gap-2 text-sm font-semibold text-brand-700 dark:text-brand-300">
+                    <Loader2 className="size-4 animate-spin" />Transcribing…
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div>
               <label className="label" htmlFor="title">{t('title')} *</label>
               <input id="title" className="input" value={title} onChange={e => setTitle(e.target.value)} maxLength={200}
@@ -345,14 +495,14 @@ export default function ReportWizard() {
               <label className="label" htmlFor="desc">{t('description')} *</label>
               <textarea id="desc" className="input min-h-32" value={desc} onChange={e => setDesc(e.target.value)} maxLength={5000}
                 placeholder="Describe what you see, how long it has been there, and who is affected…" />
-              <p className="mt-1 text-right text-xs text-gray-400">{desc.length}/5000</p>
+              <p className="mt-1 text-right text-xs text-ink-500 dark:text-ink-400">{desc.length}/5000</p>
             </div>
             <div>
               <span className="label">{t('category_opt')}</span>
               <div className="flex flex-wrap gap-2">
                 {(meta?.categories ?? []).map(c => (
                   <button key={c} type="button" onClick={() => setCategory(category === c ? '' : c)}
-                    className={`rounded-full border px-3.5 py-1.5 text-sm font-medium transition ${category === c ? 'border-brand-600 bg-brand-600 text-white shadow-md shadow-brand-600/25' : 'border-gray-300 bg-white text-gray-700 hover:border-brand-400 dark:border-white/15 dark:bg-white/5 dark:text-gray-200'}`}>
+                    className={`rounded-full border px-3.5 py-1.5 text-sm font-medium transition ${category === c ? 'border-brand-600 bg-brand-600 text-white shadow-md shadow-brand-600/25' : 'border-ink-300 bg-white text-ink-700 hover:border-brand-400 dark:border-white/15 dark:bg-white/5 dark:text-ink-200'}`}>
                     {CATEGORY_ICONS[c]} {c}
                   </button>
                 ))}
@@ -363,10 +513,10 @@ export default function ReportWizard() {
               <textarea id="cmts" className="input" value={comments} onChange={e => setComments(e.target.value)} maxLength={2000} />
             </div>
             {!user && (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-white/10 dark:bg-white/5">
+              <div className="rounded-xl border border-ink-200 bg-ink-50 p-4 dark:border-white/10 dark:bg-white/5">
                 <label className="label" htmlFor="captcha">Quick check: what is {captcha.a} + {captcha.b}? *</label>
                 <input id="captcha" inputMode="numeric" className="input max-w-32" value={captchaAns} onChange={e => setCaptchaAns(e.target.value)} />
-                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">You're reporting anonymously. <Link className="font-semibold text-brand-700 dark:text-brand-300 hover:underline" to="/login">Sign in</Link> to track your reports and get notified.</p>
+                <p className="mt-2 text-xs text-ink-500 dark:text-ink-400">You're reporting anonymously. <Link className="font-semibold text-brand-700 dark:text-brand-300 hover:underline" to="/login">Sign in</Link> to track your reports and get notified.</p>
               </div>
             )}
           </div>
@@ -376,10 +526,10 @@ export default function ReportWizard() {
           <div className="space-y-4">
             <h2 className="font-bold">Review & submit</h2>
             <dl className="space-y-3 text-sm">
-              <div className="flex justify-between gap-4"><dt className="text-gray-500">{t('title')}</dt><dd className="text-right font-semibold">{title}</dd></div>
-              <div className="flex justify-between gap-4"><dt className="text-gray-500">Category</dt><dd className="font-semibold">{category || 'AI will decide'}</dd></div>
-              <div className="flex justify-between gap-4"><dt className="text-gray-500">{t('location')}</dt><dd className="text-right font-semibold">{address ? address.split(',').slice(0, 2).join(',') : pos ? `${pos[0].toFixed(4)}, ${pos[1].toFixed(4)}` : '—'} · {city}</dd></div>
-              <div className="flex justify-between gap-4"><dt className="text-gray-500">{t('evidence')}</dt><dd className="font-semibold">{evidence.length} file(s)</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-ink-500">{t('title')}</dt><dd className="text-right font-semibold">{title}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-ink-500">Category</dt><dd className="font-semibold">{category || 'AI will decide'}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-ink-500">{t('location')}</dt><dd className="text-right font-semibold">{address ? address.split(',').slice(0, 2).join(',') : pos ? `${pos[0].toFixed(4)}, ${pos[1].toFixed(4)}` : '—'} · {city}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-ink-500">{t('evidence')}</dt><dd className="font-semibold">{evidence.length} file(s)</dd></div>
             </dl>
             <div className="rounded-xl bg-brand-50 p-4 text-xs text-brand-900 dark:bg-brand-400/10 dark:text-brand-200">
               By submitting, you agree your video/photos will be reviewed by our AI and the responsible organization to fix this issue.
@@ -390,7 +540,7 @@ export default function ReportWizard() {
                 {evidence.map((ev, i) => (
                   <div key={i}>
                     <div className="flex justify-between text-xs"><span className="truncate">{ev.file.name}</span><span>{progress[i] ?? 0}%</span></div>
-                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-white/10">
+                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink-200 dark:bg-white/10">
                       <div className="h-full rounded-full bg-brand-600 transition-all duration-200" style={{ width: `${progress[i] ?? 0}%` }} />
                     </div>
                   </div>

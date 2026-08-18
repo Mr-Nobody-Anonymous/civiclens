@@ -15,6 +15,20 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-me"       # override in prod!
     session_ttl_hours: int = 24 * 14
 
+    # --- deployment topology ---
+    # Same-origin (default): frontend served by this API or proxied in front of
+    # it — leave cors_origins empty. Split deployment (e.g. frontend on
+    # Vercel/Netlify, API on Render/Fly/VPS): set CL_CORS_ORIGINS to the exact
+    # frontend origins (comma separated, no trailing slash), e.g.
+    #   CL_CORS_ORIGINS=https://civiclens.vercel.app,https://civiclens.et
+    cors_origins: str = ""
+    # Cookie SameSite. "" = auto: "none" when cors_origins is set (cross-site
+    # frontend needs it), else "lax". SameSite=None forces Secure (HTTPS only).
+    # NOTE: app.example.com -> api.example.com is SAME-SITE; "lax" works there.
+    cookie_samesite: str = ""                      # "" | lax | none | strict
+    # Public URL of the app (used in e-mails / absolute links when set).
+    public_base_url: str = ""
+
     # --- database (any SQLAlchemy URL: sqlite, postgresql+psycopg://...) ---
     database_url: str = "sqlite:///./civiclens.db"
 
@@ -46,6 +60,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     job_max_attempts: int = 3
     job_backoff_base_s: int = 5
+    worker_concurrency: int = 2                    # parallel jobs per worker process
 
     # --- notifications ---
     email_backend: str = "console"                 # console | smtp
@@ -57,9 +72,21 @@ class Settings(BaseSettings):
     email_from: str = "no-reply@civiclens.et"
     email_from_name: str = "CivicLens Ethiopia"
 
+    # --- web push (VAPID) ---
+    # Generate once:  python -m app.push --generate-keys
+    # Empty keys = push disabled (UI hides the toggle; API returns 503).
+    vapid_public_key: str = ""                     # base64url, uncompressed P-256 point
+    vapid_private_key: str = ""                    # base64url raw 32-byte private value
+    vapid_subject: str = "mailto:admin@civiclens.et"
+
     # --- rate limiting ---
+    rate_limit_backend: str = ""                   # "" = follow job_backend | memory | redis
     rate_limit_reports_per_hour: int = 10
     rate_limit_auth_per_minute: int = 10
+
+    # --- demo-data safety (see PRODUCTION.md) ---
+    seed_demo_data: bool = True                    # MUST be false in production
+    create_demo_accounts: bool = True              # MUST be false in production
 
     # --- account lockout ---
     login_max_failures: int = 8
@@ -80,8 +107,32 @@ class Settings(BaseSettings):
     # --- duplicate detection ---
     duplicate_radius_m: int = 150
     duplicate_window_days: int = 7
+    duplicate_analyzers: str = "geo_text,image_hash,video_embedding"  # pluggable analyzer chain
 
     frontend_dist: str = "../frontend/dist"
+
+    # ---- derived helpers (deployment topology) ----
+    @property
+    def ai_url(self) -> str:
+        """ai_service_url with a guaranteed scheme (PaaS service-discovery
+        variables like Render's `hostport` provide bare host:port)."""
+        u = self.ai_service_url.strip().rstrip("/")
+        return u if u.startswith(("http://", "https://")) else f"http://{u}"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def effective_samesite(self) -> str:
+        if self.cookie_samesite in ("lax", "none", "strict"):
+            return self.cookie_samesite
+        return "none" if self.cors_origin_list else "lax"
+
+    @property
+    def cookie_secure(self) -> bool:
+        # SameSite=None REQUIRES Secure; production always uses Secure.
+        return self.env == "production" or self.effective_samesite == "none"
 
     class Config:
         env_prefix = "CL_"

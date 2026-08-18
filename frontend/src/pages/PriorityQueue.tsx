@@ -29,10 +29,10 @@ export default function PriorityQueue() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="flex items-center gap-2 text-2xl font-extrabold"><ListOrdered className="size-6 text-brand-600" />Priority Queue</h1>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Unresolved reports ordered by severity — critical first.{user?.role === 'org_staff' ? ' Showing only your organization.' : ''}</p>
+      <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">Unresolved reports ordered by severity — critical first.{user?.role === 'org_staff' ? ' Showing only your organization.' : ''}</p>
 
       {rows === null && <div className="mt-6 space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>}
-      {rows?.length === 0 && <p className="card mt-6 p-10 text-center text-sm text-gray-500">Queue is empty — no open reports. 🎉</p>}
+      {rows?.length === 0 && <p className="card mt-6 p-10 text-center text-sm text-ink-500">Queue is empty — no open reports. 🎉</p>}
 
       <div className="mt-6 space-y-7">
         {groups.map(g => g.items.length > 0 && (
@@ -46,7 +46,7 @@ export default function PriorityQueue() {
         ))}
         {unrated.length > 0 && (
           <section>
-            <h2 className="mb-2.5 text-sm font-bold uppercase tracking-wider text-gray-400">Awaiting AI severity ({unrated.length})</h2>
+            <h2 className="mb-2.5 text-sm font-bold uppercase tracking-wider text-ink-500 dark:text-ink-400">Awaiting AI severity ({unrated.length})</h2>
             <div className="space-y-2.5">{unrated.map(r => <ReportRow key={r.id} r={r} onChanged={load} />)}</div>
           </section>
         )}

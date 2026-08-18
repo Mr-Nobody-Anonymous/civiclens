@@ -47,11 +47,12 @@ def create_session(db: DBSession, user: User, response: Response) -> str:
         SessionModel.user_id == user.id,
         SessionModel.expires_at < datetime.now(timezone.utc)).delete()
     db.commit()
-    secure = settings.env == "production"
-    response.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax",
+    secure = settings.cookie_secure
+    samesite = settings.effective_samesite
+    response.set_cookie(COOKIE_NAME, token, httponly=True, samesite=samesite,
                         secure=secure, max_age=settings.session_ttl_hours * 3600, path="/")
     # CSRF cookie is intentionally NOT HttpOnly (double-submit pattern: JS must read it)
-    response.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite="lax",
+    response.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite=samesite,
                         secure=secure, max_age=settings.session_ttl_hours * 3600, path="/")
     return token
 
@@ -108,19 +109,83 @@ require_org = require_roles(Role.admin, Role.org_staff)            # org portal
 require_triage = require_roles(Role.admin, Role.moderator, Role.org_staff)  # priority queue
 
 
-# ------------------------- simple in-memory rate limiter -------------------------
+# ------------------------- rate limiter -------------------------
+# Redis-backed (shared across API instances) when CL_JOB_BACKEND=redis or
+# CL_RATE_LIMIT_BACKEND=redis; in-memory sliding window for local development.
 _buckets: dict = defaultdict(deque)
+_redis_client = None
+_redis_failed_at = 0.0
 
 
-def rate_limit(key: str, limit: int, window_s: int):
-    """Sliding-window limiter. In multi-instance prod, swap for Redis."""
+def _get_redis():
+    """Lazily connect; on failure fall back to memory and retry after 30s."""
+    global _redis_client, _redis_failed_at
+    backend = getattr(settings, "rate_limit_backend", "") or settings.job_backend
+    if backend != "redis":
+        return None
+    if _redis_client is not None:
+        return _redis_client
+    if time.time() - _redis_failed_at < 30:
+        return None
+    try:
+        import redis
+        client = redis.from_url(settings.redis_url, socket_timeout=1,
+                                socket_connect_timeout=1)
+        client.ping()
+        _redis_client = client
+        return client
+    except Exception:
+        _redis_failed_at = time.time()
+        return None
+
+
+def _rate_limit_memory(key: str, limit: int, window_s: int) -> bool:
     q = _buckets[key]
     cutoff = time.time() - window_s
     while q and q[0] < cutoff:
         q.popleft()
     if len(q) >= limit:
-        raise HTTPException(429, "Too many requests — please slow down.")
+        return False
     q.append(time.time())
+    return True
+
+
+def _rate_limit_redis(client, key: str, limit: int, window_s: int) -> bool:
+    """TRUE sliding-window limiter shared by all API instances.
+
+    Sorted set per key: members are unique event ids scored by timestamp.
+    Atomic pipeline: drop events older than the window, count the rest,
+    add this event, refresh TTL. No fixed-window boundary-burst edge
+    (the old INCR-per-window variant allowed up to 2x limit across a
+    window rollover)."""
+    rkey = f"civiclens:rl:{key}"
+    now = time.time()
+    try:
+        member = f"{now:.6f}:{secrets.token_hex(4)}"
+        pipe = client.pipeline()
+        pipe.zremrangebyscore(rkey, 0, now - window_s)   # evict expired events
+        pipe.zadd(rkey, {member: now})
+        pipe.zcard(rkey)
+        pipe.expire(rkey, window_s + 1)
+        _, _, count, _ = pipe.execute()
+        if int(count) > limit:
+            # over limit: remove our own event so rejected requests don't
+            # extend the lockout (standard sliding-log behavior)
+            client.zrem(rkey, member)
+            return False
+        return True
+    except Exception:
+        global _redis_client, _redis_failed_at
+        _redis_client, _redis_failed_at = None, time.time()
+        return _rate_limit_memory(key, limit, window_s)  # degrade, stay usable
+
+
+def rate_limit(key: str, limit: int, window_s: int):
+    client = _get_redis()
+    ok = (_rate_limit_redis(client, key, limit, window_s) if client
+          else _rate_limit_memory(key, limit, window_s))
+    if not ok:
+        raise HTTPException(429, "Too many requests — please slow down.")
 
 
 def client_ip(request: Request) -> str:

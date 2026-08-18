@@ -1,0 +1,31 @@
+# CivicLens Ethiopia — Netlify config (frontend-only deploy).
+# Set the API origin below (or use VITE_API_BASE at build time instead —
+# see DEPLOYMENT.md "Split deployment").
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Proxy API calls to the backend => browser stays same-origin (cookies just work).
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-API-HOST.example.com/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
