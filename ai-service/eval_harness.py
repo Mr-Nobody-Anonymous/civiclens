@@ -138,29 +138,30 @@ def main():
     print(json.dumps(results, indent=2, ensure_ascii=False))
 
     # append to tracked history (accuracy over time)
-    with open("eval_history.jsonl", "a") as f:
+    with open("eval_history.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(results, ensure_ascii=False) + "\n")
 
     if args.update_baseline:
-        json.dump({k: results[k] for k in BASELINE_KEYS if k in results},
-                  open("eval_baseline.json", "w"), indent=2)
+        with open("eval_baseline.json", "w", encoding="utf-8") as f:
+            json.dump({k: results[k] for k in BASELINE_KEYS if k in results}, f, indent=2)
         print("baseline updated")
         return
 
     if args.check:
         try:
-            baseline = json.load(open("eval_baseline.json"))
+            with open("eval_baseline.json", "r", encoding="utf-8") as f:
+                baseline = json.load(f)
         except FileNotFoundError:
             print("no baseline — creating one")
-            json.dump({k: results[k] for k in BASELINE_KEYS if k in results},
-                      open("eval_baseline.json", "w"), indent=2)
+            with open("eval_baseline.json", "w", encoding="utf-8") as f:
+                json.dump({k: results[k] for k in BASELINE_KEYS if k in results}, f, indent=2)
             return
         failures = [f"{k}: {results.get(k, 0)} < baseline {v}"
                     for k, v in baseline.items() if results.get(k, 0) < v]
         if failures:
             print("AI QUALITY REGRESSION:\n  " + "\n  ".join(failures))
             sys.exit(1)
-        print("eval >= baseline on all tracked dimensions ✓")
+        print("eval >= baseline on all tracked dimensions [OK]")
 
 
 if __name__ == "__main__":

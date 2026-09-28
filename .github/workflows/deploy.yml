@@ -20,8 +20,11 @@
 name: Publish & Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CivicLens CI"]
+    types: [completed]
     branches: [main]
+  push:
     tags: ["v*"]
   workflow_dispatch:
 
@@ -35,6 +38,7 @@ env:
 jobs:
   publish-images:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
 

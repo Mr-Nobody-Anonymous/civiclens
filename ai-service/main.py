@@ -461,8 +461,11 @@ async def transcribe(request: Request):
         src = _os.path.join(td, "in.audio")
         wav = _os.path.join(td, "in.wav")
         open(src, "wb").write(audio)
-        p = subprocess.run(["ffmpeg", "-y", "-i", src, "-ar", "16000", "-ac", "1", wav],
-                           capture_output=True, timeout=120)
+        try:
+            p = subprocess.run(["ffmpeg", "-y", "-i", src, "-ar", "16000", "-ac", "1", wav],
+                               capture_output=True, timeout=120)
+        except FileNotFoundError:
+            return {"error": "ffmpeg not available on host"}
         if p.returncode != 0 or not _os.path.exists(wav):
             return {"error": "could not decode audio"}
         try:

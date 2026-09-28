@@ -1,3 +1,5 @@
+import shutil
+import pytest
 from fastapi.testclient import TestClient
 from main import app
 
@@ -163,6 +165,7 @@ def test_transcribe_rejects_empty_and_garbage():
     assert "error" in r.json()
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed on this system")
 def test_transcribe_real_audio():
     """Real WAV through the full pipeline: ffmpeg -> whisper -> draft.
     Uses a synthesized sine tone; whisper returns empty/no-speech -> graceful,
