@@ -1,9 +1,7 @@
 /* Admin journey: dashboards, users, rules, jobs incl. retry, moderation,
    AI correction, audit log. */
 import { test, expect } from '@playwright/test'
-import { login, openRow, uniq } from './helpers'
-
-const id = uniq()
+import { login, openRow } from './helpers'
 
 test.describe.serial('admin journey', () => {
   test('overview KPIs are real data', async ({ page }) => {
