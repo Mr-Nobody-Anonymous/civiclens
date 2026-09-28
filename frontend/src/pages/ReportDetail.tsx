@@ -6,6 +6,7 @@ import type { Report } from '../lib/types'
 import { CATEGORY_ICONS } from '../lib/types'
 import { useApp } from '../lib/store'
 import { useI18n } from '../lib/i18n'
+import { DEMO_REPORTS } from '../lib/demo'
 import IssueMap from '../components/IssueMap'
 import { ConfirmDialog, DemoBadge, SeverityBadge, Skeleton, StatusBadge } from '../components/ui'
 
@@ -26,7 +27,15 @@ export default function ReportDetail() {
     const cid = (d as { cluster_id?: string }).cluster_id
     if (cid) api.get(`/api/clusters/${cid}`).then(setCluster).catch(() => {})
     api.get(`/api/reports/${id}/verification`).then(setVotes).catch(() => {})
-  }).catch(e => setErr(e.message))
+  }).catch(e => {
+    const demo = DEMO_REPORTS.find(dr => dr.id === id || dr.public_code === id)
+    if (demo) {
+      setR(demo)
+      setVotes({ still_exists: 12, resolved: 3, not_sure: 1 })
+    } else {
+      setErr(e.message)
+    }
+  })
   useEffect(() => { load() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (err) return (

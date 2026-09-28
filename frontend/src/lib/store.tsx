@@ -25,12 +25,51 @@ function isDemoUser(u: User | null): boolean {
   return !!u && u.id.startsWith('demo-')
 }
 
+const DEFAULT_META: Meta = {
+  categories: [
+    'Roads & Infrastructure',
+    'Water & Sanitation',
+    'Electricity & Power',
+    'Waste Management',
+    'Telecom',
+    'Public Safety',
+    'Traffic & Transport',
+    'Environment & Green Spaces',
+  ],
+  cities: [
+    'Addis Ababa',
+    'Dire Dawa',
+    'Hawassa',
+    'Adama',
+    'Bahir Dar',
+    'Mekelle',
+    'Gondar',
+    'Jimma',
+    'Dessie',
+    'Bishoftu',
+  ],
+  default_center: { lat: 9.0108, lng: 38.7613 },
+  statuses: [
+    'submitted',
+    'ai_analysis',
+    'under_review',
+    'assigned',
+    'in_progress',
+    'resolved',
+    'rejected',
+    'duplicate',
+    'reopened',
+  ],
+  max_video_mb: 25,
+  max_image_mb: 10,
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<User | null>(() => {
     try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null') } catch { return null }
   })
   const [authLoaded, setAuthLoaded] = useState(false)
-  const [meta, setMeta] = useState<Meta | null>(null)
+  const [meta, setMeta] = useState<Meta | null>(DEFAULT_META)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [dark, setDark] = useState(() =>
     localStorage.getItem('cl_dark') === '1' ||
@@ -54,7 +93,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
     api.get('/api/auth/me').then(u => setUser(u)).catch(() => {}).finally(() => setAuthLoaded(true))
-    api.get('/api/meta').then(setMeta).catch(() => {})
+    api.get('/api/meta').then(setMeta).catch(() => setMeta(DEFAULT_META))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

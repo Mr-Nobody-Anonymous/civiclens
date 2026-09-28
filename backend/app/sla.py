@@ -100,7 +100,7 @@ def check_slas(db: DBSession) -> int:
             # notify admins once (escalation path: org didn't respond -> administrators)
             org = db.get(Organization, r.organization_id)
             for admin in db.query(User).filter(User.role == Role.admin,
-                                               User.is_active == True).limit(5).all():  # noqa: E712
+                                               User.is_active.is_(True)).limit(5).all():
                 notify(db, admin, "sla_breach",
                        f"SLA breach: {r.public_code} ({kind.replace('_', ' ')})",
                        f"{org.name if org else 'Organization'} is {overdue:.1f}h overdue on "

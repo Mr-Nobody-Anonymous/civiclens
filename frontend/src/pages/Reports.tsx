@@ -6,6 +6,7 @@ import type { Report } from '../lib/types'
 import { SEVERITY, STATUS_META } from '../lib/types'
 import { useApp } from '../lib/store'
 import { useI18n } from '../lib/i18n'
+import { DEMO_REPORTS } from '../lib/demo'
 import ReportCard from '../components/ReportCard'
 import { CardSkeleton, EmptyState } from '../components/ui'
 
@@ -39,7 +40,19 @@ export default function Reports() {
     if (status) usp.set('status', status)
     if (severity) usp.set('severity', severity)
     if (mine) usp.set('mine', 'true')
-    api.get(`/api/reports?${usp}`).then(setData).catch(() => setData({ items: [], total: 0 })).finally(() => setLoading(false))
+    api.get(`/api/reports?${usp}`)
+      .then(setData)
+      .catch(() => {
+        const filtered = DEMO_REPORTS.filter(r => {
+          if (category && r.category !== category) return false
+          if (status && r.status !== status) return false
+          if (severity && String(r.severity) !== severity) return false
+          if (q && !r.title.toLowerCase().includes(q.toLowerCase()) && !r.description.toLowerCase().includes(q.toLowerCase())) return false
+          return true
+        })
+        setData({ items: filtered, total: filtered.length })
+      })
+      .finally(() => setLoading(false))
   }, [q, category, status, severity, sort, mine, page])
 
   const pages = data ? Math.max(1, Math.ceil(data.total / 12)) : 1

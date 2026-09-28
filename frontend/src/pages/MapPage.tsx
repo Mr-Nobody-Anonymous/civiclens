@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import { SEVERITY } from '../lib/types'
 import { useApp } from '../lib/store'
 import { useI18n } from '../lib/i18n'
+import { DEMO_REPORTS } from '../lib/demo'
 import IssueMap, { type MapPoint } from '../components/IssueMap'
 
 export default function MapPage() {
@@ -20,7 +21,21 @@ export default function MapPage() {
     const usp = new URLSearchParams()
     if (category) usp.set('category', category)
     if (minSev) usp.set('min_severity', String(minSev))
-    api.get(`/api/reports/map?${usp}`).then(setPoints).catch(() => {})
+    api.get(`/api/reports/map?${usp}`).then(setPoints).catch(() => {
+      const demoPts = DEMO_REPORTS
+        .filter(r => r.latitude && r.longitude && (!category || r.category === category) && (!minSev || (r.severity ?? 0) >= minSev))
+        .map(r => ({
+          id: r.id,
+          lat: r.latitude!,
+          lng: r.longitude!,
+          severity: r.severity ?? 3,
+          category: r.category,
+          status: r.status,
+          title: r.title,
+          code: r.public_code,
+        }))
+      setPoints(demoPts)
+    })
   }, [category, minSev])
 
   const center = useMemo<[number, number]>(() =>
